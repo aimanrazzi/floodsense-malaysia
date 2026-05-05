@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "414393200615",
+    "project_id": "scam-detector-3ebee",
+    "storage_bucket": "scam-detector-3ebee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:414393200615:android:3b127427e34495c9a8d742",
+        "android_client_info": {
+          "package_name": "com.aimanrazzi.scamdetector"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvB4SP4ATQdqTD_hPVqqgHozDTsEMddqg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

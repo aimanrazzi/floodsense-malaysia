@@ -1,0 +1,11 @@
+flask
+flask-cors
+flask-limiter
+groq
+Pillow
+python-dotenv
+requests
+google-search-results
+beautifulsoup4
+firebase-admin
+gunicorn==21.2.0

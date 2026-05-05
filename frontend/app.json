@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Scam Detector",
+    "slug": "scam-detector",
+    "scheme": "scamdetector",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.aimanrazzi.scamdetector",
+      "googleServicesFile": "./google-services.json"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aimanrazzi.scamdetector"
+    },
+    "plugins": [
+      "expo-asset",
+      "@react-native-google-signin/google-signin",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "bea01942-8bf5-4f14-b80b-63315b32aa13"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/bea01942-8bf5-4f14-b80b-63315b32aa13"
+    }
+  }
+}
