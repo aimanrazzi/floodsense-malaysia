@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FloodSense Malaysia — Government Operations Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0a1628; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+    .card  { background: #0f2440; border: 1px solid #1e3a5f; border-radius: 12px; padding: 16px; }
+    .badge-DANGER  { background:#dc262622; color:#f87171; border:1px solid #dc2626; }
+    .badge-WARNING { background:#d9770622; color:#fbbf24; border:1px solid #d97706; }
+    .badge-WATCH   { background:#eab30822; color:#fde68a; border:1px solid #eab308; }
+    .badge-SAFE    { background:#16a34a22; color:#4ade80; border:1px solid #16a34a; }
+    .agent-from { font-size:11px; font-weight:700; padding:2px 7px; border-radius:99px; }
+    .ag-Data      { background:#1e3a5f; color:#93c5fd; }
+    .ag-Forecast  { background:#1a2a4a; color:#a5b4fc; }
+    .ag-Analysis  { background:#1e2a4a; color:#c4b5fd; }
+    .ag-Decision  { background:#1a3040; color:#6ee7b7; }
+    .ag-Action    { background:#1a2a1a; color:#86efac; }
+    .ag-Dashboard { background:#2a1a1a; color:#fca5a5; }
+    .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+    .dot-DANGER  { background:#dc2626; box-shadow:0 0 8px #dc2626; }
+    .dot-WARNING { background:#d97706; box-shadow:0 0 8px #d97706; }
+    .dot-WATCH   { background:#eab308; box-shadow:0 0 8px #eab308; }
+    .dot-SAFE    { background:#16a34a; box-shadow:0 0 8px #16a34a; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .row-DANGER  { border-left:3px solid #dc2626; }
+    .row-WARNING { border-left:3px solid #d97706; }
+    .row-WATCH   { border-left:3px solid #eab308; }
+    .row-SAFE    { border-left:3px solid #16a34a; }
+    .filter-btn { padding:3px 10px; border-radius:99px; font-size:11px; font-weight:700; border:1px solid; cursor:pointer; transition:all 0.15s; }
+    .filter-btn.active-ALL     { background:#1e3a5f; color:#93c5fd; border-color:#2563eb; }
+    .filter-btn.active-DANGER  { background:#dc262622; color:#f87171; border-color:#dc2626; }
+    .filter-btn.active-WARNING { background:#d9770622; color:#fbbf24; border-color:#d97706; }
+    .filter-btn.active-WATCH   { background:#eab30822; color:#fde68a; border-color:#eab308; }
+    .filter-btn.active-SAFE    { background:#16a34a22; color:#4ade80; border-color:#16a34a; }
+    .filter-btn:not([class*="active"]) { background:transparent; color:#64748b; border-color:#334155; }
+    .sos-card { background:#1a0f0f; border:1px solid #7f1d1d; border-radius:10px; padding:12px; }
+    .dispatch-btn  { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; transition:background 0.15s; }
+    .dispatch-btn:hover  { background:#2563eb; }
+    .resolve-btn   { background:#15803d; color:#fff; border:none; border-radius:8px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; transition:background 0.15s; }
+    .resolve-btn:hover   { background:#16a34a; }
+    .resolved-card { opacity:0.55; }
+    .sos-filter-btn { padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; border:1px solid; cursor:pointer; transition:all 0.15s; }
+    .sos-filter-btn.sf-active { background:#1e3a5f; color:#93c5fd; border-color:#2563eb; }
+    .sos-filter-btn:not(.sf-active) { background:transparent; color:#64748b; border-color:#334155; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:50; }
+    .modal-box { background:#0f2440; border:1px solid #1e3a5f; border-radius:16px; padding:24px; width:100%; max-width:480px; }
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-track { background:#0a1628; }
+    ::-webkit-scrollbar-thumb { background:#1e3a5f; border-radius:3px; }
+  </style>
+</head>
+<body class="min-h-screen p-4">
+
+  <!-- Resolve Modal -->
+  <div class="modal-overlay hidden" id="resolveModal">
+    <div class="modal-box">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold text-white">✅ Mark Case as Resolved</h3>
+        <button onclick="closeResolve()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+      <div class="text-xs text-slate-400 mb-3" id="resolveTarget">Case ID: —</div>
+      <div class="mb-3">
+        <label class="text-xs text-slate-400 block mb-1">Outcome</label>
+        <select id="resolveOutcome" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2">
+          <option value="Rescued successfully">Rescued successfully — all persons safe</option>
+          <option value="Evacuated to shelter">Evacuated to nearest shelter</option>
+          <option value="Self-evacuated">Persons self-evacuated before team arrived</option>
+          <option value="False alarm">False alarm — no persons in danger</option>
+          <option value="Medical assistance provided">Medical assistance provided on site</option>
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="text-xs text-slate-400 block mb-1">Officer Notes (optional)</label>
+        <textarea id="resolveNotes" rows="2" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2 resize-none" placeholder="Any additional remarks…"></textarea>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeResolve()" class="text-xs text-slate-400 px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500">Cancel</button>
+        <button onclick="confirmResolve()" class="text-xs font-bold px-4 py-2 rounded-lg bg-green-700 hover:bg-green-600 text-white">✅ Confirm Resolved</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dispatch Modal -->
+  <div class="modal-overlay hidden" id="dispatchModal">
+    <div class="modal-box">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold text-white">🚁 Dispatch Rescue Team</h3>
+        <button onclick="closeDispatch()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+      <div class="text-xs text-slate-400 mb-3" id="dispatchTarget">Case ID: —</div>
+      <div class="mb-3">
+        <label class="text-xs text-slate-400 block mb-1">Rescue Team</label>
+        <select id="dispatchTeam" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2">
+          <option value="BOMBA Alpha">BOMBA Alpha Team — Petaling Jaya</option>
+          <option value="BOMBA Bravo">BOMBA Bravo Team — Klang</option>
+          <option value="PDRM Water Unit">PDRM Water Unit — Cheras</option>
+          <option value="APM KL">APM KL (Civil Defence)</option>
+          <option value="RELA Flood Unit">RELA Flood Unit</option>
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="text-xs text-slate-400 block mb-1">Instructions / Notes</label>
+        <textarea id="dispatchNotes" rows="3" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2 resize-none" placeholder="e.g. 2 adults, 1 child — stranded on rooftop…"></textarea>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeDispatch()" class="text-xs text-slate-400 px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500">Cancel</button>
+        <button onclick="confirmDispatch()" class="text-xs font-bold px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">Confirm Dispatch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">💧</span>
+      <div>
+        <h1 class="text-xl font-bold text-white">FloodSense Malaysia</h1>
+        <p class="text-xs text-slate-400">Government Operations Dashboard · Agentic AI Early Warning System · KL / Selangor</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 flex-wrap">
+      <button onclick="triggerDemo()" id="demoBtn"
+        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-purple-800 hover:bg-purple-700 text-purple-200 border border-purple-600 transition-colors">
+        🎯 Demo Spike
+      </button>
+      <span class="dot pulse" id="statusDot"></span>
+      <span class="text-sm font-bold" id="overallRisk">Loading…</span>
+      <span class="text-xs text-slate-500" id="lastUpdated"></span>
+    </div>
+  </div>
+
+  <!-- Summary Stat Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+    <div class="card text-center"><div class="text-2xl font-bold text-red-400" id="s-risk">—</div><div class="text-xs text-slate-400 mt-1">At Risk</div></div>
+    <div class="card text-center"><div class="text-2xl font-bold text-yellow-300" id="s-watch">—</div><div class="text-xs text-slate-400 mt-1">Watch</div></div>
+    <div class="card text-center"><div class="text-2xl font-bold text-green-400" id="s-safe">—</div><div class="text-xs text-slate-400 mt-1">Safe</div></div>
+    <div class="card text-center"><div class="text-2xl font-bold text-blue-300" id="s-evac">—</div><div class="text-xs text-slate-400 mt-1">Evac Capacity</div></div>
+    <div class="card text-center cursor-pointer hover:border-orange-500 transition-colors" onclick="scrollToSOS()">
+      <div class="text-2xl font-bold text-orange-400" id="s-sos">—</div>
+      <div class="text-xs text-slate-400 mt-1">Active SOS ↓</div>
+    </div>
+  </div>
+
+  <!-- AI Decision Banner -->
+  <div class="card mb-4" id="aiBanner">
+    <div class="flex items-start justify-between gap-3 mb-2">
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-slate-400 mb-1">🤖 AI Decision Agent (Claude AI) — Real-time Situational Awareness</div>
+        <div class="text-sm font-semibold leading-snug" id="aiReasoning" style="color:#e2e8f0">Waiting for assessment…</div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-xs text-slate-500">Confidence</div>
+        <div class="text-lg font-bold text-white" id="aiConfidence">—</div>
+      </div>
+    </div>
+    <!-- Storm incoming warning (shown only when ForecastAgent detects storm cells) -->
+    <div id="aiStormBar" class="hidden rounded-lg px-3 py-2 text-xs mb-2"
+         style="background:#422006;border:1px solid #92400e;color:#fde68a">
+      ⛈ <strong>Incoming storm:</strong> <span id="aiStormText"></span>
+    </div>
+    <!-- Priority SOS dispatch (shown when active cases exist) -->
+    <div id="aiPriorityBar" class="hidden rounded-lg px-3 py-2 flex items-center justify-between gap-2 mb-2"
+         style="background:#3b0707;border:1px solid #7f1d1d">
+      <div class="text-xs" style="color:#fca5a5">
+        🚨 <strong>Priority dispatch:</strong> <span id="aiPriorityText" class="font-normal text-white"></span>
+      </div>
+      <button id="aiPriorityBtn" class="dispatch-btn shrink-0" style="font-size:10px">Dispatch</button>
+    </div>
+    <!-- Recommended action -->
+    <div class="text-xs text-emerald-400" id="aiAction"></div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+    <!-- District Table -->
+    <div class="lg:col-span-2 space-y-4">
+      <div class="card">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 class="text-sm font-bold text-white">📍 District Status</h2>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-xs text-slate-500">Filter:</span>
+            <button class="filter-btn active-ALL" data-filter="ALL" onclick="setFilter('ALL')">All</button>
+            <button class="filter-btn" data-filter="DANGER" onclick="setFilter('DANGER')">🔴 Danger</button>
+            <button class="filter-btn" data-filter="WARNING" onclick="setFilter('WARNING')">🟡 Warning</button>
+            <button class="filter-btn" data-filter="WATCH" onclick="setFilter('WATCH')">🟠 Watch</button>
+            <button class="filter-btn" data-filter="SAFE" onclick="setFilter('SAFE')">🟢 Safe</button>
+          </div>
+        </div>
+        <div class="overflow-y-auto" style="max-height:380px">
+          <table class="w-full text-xs">
+            <thead class="text-slate-400 border-b border-slate-700 sticky top-0 bg-[#0f2440]">
+              <tr>
+                <th class="text-left py-2 pl-2">District</th>
+                <th class="text-left py-2">Type</th>
+                <th class="text-right py-2">Rain</th>
+                <th class="text-right py-2">2h Fcst</th>
+                <th class="text-right py-2">River</th>
+                <th class="text-center py-2">Evac</th>
+                <th class="text-center py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody id="districtTable" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SOS Panel -->
+      <div class="card" id="sosPanel">
+        <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <h2 class="text-sm font-bold text-white">🆘 SOS Cases</h2>
+          <span class="text-xs text-slate-500" id="sosCount">No active cases</span>
+        </div>
+        <div class="flex gap-1.5 mb-3 flex-wrap">
+          <button class="sos-filter-btn sf-active" data-sf="active"   onclick="setSosFilter('active')">Active</button>
+          <button class="sos-filter-btn"            data-sf="dispatched" onclick="setSosFilter('dispatched')">Dispatched</button>
+          <button class="sos-filter-btn"            data-sf="resolved"   onclick="setSosFilter('resolved')">Resolved</button>
+          <button class="sos-filter-btn"            data-sf="all"        onclick="setSosFilter('all')">All</button>
+        </div>
+        <div id="sosList" class="space-y-2">
+          <p class="text-xs text-slate-600">No SOS requests received.</p>
+        </div>
+      </div>
+
+      <!-- Evacuation Summary -->
+      <div class="card">
+        <h2 class="text-sm font-bold text-white mb-3">🏫 Evacuation Centres — Location &amp; Capacity</h2>
+        <div id="evacSummary" class="grid grid-cols-2 md:grid-cols-3 gap-2 overflow-y-auto" style="max-height:320px"></div>
+      </div>
+    </div>
+
+    <!-- Agent Comms Feed -->
+    <div class="card flex flex-col" style="max-height:720px">
+      <h2 class="text-sm font-bold text-white mb-2">🤖 Agent Communication Log</h2>
+      <div class="text-xs text-slate-500 mb-3">
+        <div class="flex gap-1.5 flex-wrap">
+          <span class="agent-from ag-Data">DataAgent</span>
+          <span class="agent-from ag-Forecast">ForecastAgent</span>
+          <span class="agent-from ag-Analysis">AnalysisAgent</span>
+          <span class="agent-from ag-Decision">DecisionAgent</span>
+          <span class="agent-from ag-Action">ActionAgent</span>
+        </div>
+        <p class="mt-2 text-slate-600 leading-relaxed">Each agent passes enriched data to the next. DataAgent fetches live sensor readings → ForecastAgent predicts storm arrival → AnalysisAgent detects anomalies via Isolation Forest → DecisionAgent classifies risk using Claude AI → ActionAgent triggers alerts, evacuations &amp; push notifications.</p>
+      </div>
+      <div class="overflow-y-auto flex-1 space-y-2" id="agentFeed"></div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="mt-4 text-center text-xs text-slate-600">
+    FloodSense Malaysia · Auto-refreshes every 15s · Powered by Claude AI + Isolation Forest ML + WeatherAPI · KL/Selangor focus
+  </div>
+
+<script>
+const RISK_COLOR = { DANGER:'#f87171', WARNING:'#fbbf24', WATCH:'#fde68a', SAFE:'#4ade80' };
+const AG_CLASS = {
+  DataAgent:'ag-Data', ForecastAgent:'ag-Forecast',
+  AnalysisAgent:'ag-Analysis', DecisionAgent:'ag-Decision',
+  ActionAgent:'ag-Action', Dashboard:'ag-Dashboard'
+};
+const AG_DESC = {
+  DataAgent:    'Fetches live rainfall & river levels from WeatherAPI + JPS sensor network across 11 KL/Selangor districts.',
+  ForecastAgent:'Analyses upcoming hourly forecast data to detect incoming storm cells and estimate time-to-impact.',
+  AnalysisAgent:'Runs Isolation Forest anomaly detection on current readings to flag statistically unusual rainfall events.',
+  DecisionAgent:'Calls Claude AI with enriched sensor + forecast + anomaly data to produce a structured risk classification with confidence score.',
+  ActionAgent:  'Executes decisions: activates evacuation centres, sends Expo push notifications to registered users, logs recommendations.',
+};
+
+let _allDistricts  = [];
+let _activeFilter  = 'ALL';
+let _dispatchCaseId = null;
+let _resolveCaseId  = null;
+let _allSosCases    = [];
+let _sosFilter      = 'active';
+
+async function refresh() {
+  try {
+    const [statsRes, sosRes] = await Promise.all([
+      fetch('/api/dashboard/stats'),
+      fetch('/api/rescue/cases').catch(() => ({ ok: false })),
+    ]);
+    const d = await statsRes.json();
+    _allDistricts = d.districts || [];
+    renderSummary(d);
+    renderDistricts(_allDistricts);
+    renderAgentFeed(d.agent_comms || []);
+    renderEvacSummary(_allDistricts);
+    if (sosRes.ok) {
+      const sos = await sosRes.json();
+      _allSosCases = sos.cases || [];
+      renderSOS(_allSosCases);
+    }
+  } catch(e) { console.error(e); }
+}
+
+function renderSummary(d) {
+  const s = d.summary || {};
+  document.getElementById('s-risk').textContent  = s.at_risk ?? '—';
+  document.getElementById('s-watch').textContent = s.watching ?? '—';
+  document.getElementById('s-safe').textContent  = s.safe ?? '—';
+  document.getElementById('s-evac').textContent  = s.total_evac_capacity?.toLocaleString() ?? '—';
+  document.getElementById('s-sos').textContent   = s.active_sos ?? '0';
+
+  const risk = d.overall_risk || 'SAFE';
+  const dot  = document.getElementById('statusDot');
+  dot.className = `dot pulse dot-${risk}`;
+  document.getElementById('overallRisk').textContent = risk;
+  document.getElementById('overallRisk').style.color = RISK_COLOR[risk] || '#fff';
+
+  if (d.last_updated) {
+    const t = new Date(d.last_updated);
+    document.getElementById('lastUpdated').textContent = 'Last cycle: ' + t.toLocaleTimeString('en-MY');
+  }
+
+  // AI banner — situation summary
+  const aiEl = document.getElementById('aiReasoning');
+  aiEl.textContent = d.reasoning || 'No assessment yet';
+  aiEl.style.color = RISK_COLOR[risk] || '#e2e8f0';
+  document.getElementById('aiAction').textContent     = d.recommended_action ? '→ ' + d.recommended_action : '';
+  document.getElementById('aiConfidence').textContent = d.confidence ? Math.round(d.confidence * 100) + '%' : '—';
+
+  // Storm incoming bar
+  const storms = d.storm_warnings || [];
+  const stormBar  = document.getElementById('aiStormBar');
+  const stormText = document.getElementById('aiStormText');
+  if (storms.length) {
+    stormText.textContent = storms
+      .map(s => `${s.district} — ${s.peak_mm}mm in ${s.eta_hours}h (${s.chance_pct}% probability)`)
+      .join(' · ');
+    stormBar.classList.remove('hidden');
+  } else {
+    stormBar.classList.add('hidden');
+  }
+
+  // Priority SOS bar
+  const prio    = d.sos_priority;
+  const prioBar = document.getElementById('aiPriorityBar');
+  const prioTxt = document.getElementById('aiPriorityText');
+  const prioBtn = document.getElementById('aiPriorityBtn');
+  if (prio && prio.status !== 'dispatched') {
+    const waitStr = prio.minutes_waiting < 60
+      ? `${prio.minutes_waiting}min wait`
+      : `${Math.round(prio.minutes_waiting/60)}h wait`;
+    prioTxt.textContent =
+      `${prio.district} — ${prio.people_count} person(s), ${waitStr}, ${prio.district_status} zone (score ${prio.priority_score})`;
+    prioBtn.onclick = () => openDispatch(prio.case_id);
+    prioBar.classList.remove('hidden');
+  } else {
+    prioBar.classList.add('hidden');
+  }
+}
+
+function setFilter(f) {
+  _activeFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    const bf = btn.dataset.filter;
+    btn.className = `filter-btn${f === bf ? ' active-' + bf : ''}`;
+  });
+  renderDistricts(_allDistricts);
+}
+
+function renderDistricts(districts) {
+  const filtered = _activeFilter === 'ALL' ? districts : districts.filter(d => d.status === _activeFilter);
+  const tbody = document.getElementById('districtTable');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-600 text-xs">No districts match this filter.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map(d => {
+    const icon   = d.flood_type === 'flash_flood' ? '⚡' : '🌊';
+    const trend  = d.trend === 'rising' ? '⬆' : d.trend === 'easing' ? '⬇' : '→';
+    const tColor = d.trend === 'rising' ? '#fbbf24' : d.trend === 'easing' ? '#4ade80' : '#94a3b8';
+    const evac   = d.evac_centers > 0
+      ? `<span class="text-green-400">${d.evac_centers} open</span>`
+      : `<span class="text-slate-600">—</span>`;
+    return `
+      <tr class="row-${d.status} hover:bg-slate-800/30 transition-colors">
+        <td class="py-2 pl-2 font-semibold text-white">${d.district}</td>
+        <td class="py-2 text-slate-400">${icon}</td>
+        <td class="py-2 text-right text-blue-300">${(d.rainfall||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
+        <td class="py-2 text-right" style="color:${tColor}">${trend} ${(d.forecast_2h||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
+        <td class="py-2 text-right text-cyan-300">${(d.river_level||0).toFixed(1)}<span class="text-slate-500">m</span></td>
+        <td class="py-2 text-center">${evac}</td>
+        <td class="py-2 text-center">
+          <span class="badge-${d.status} text-xs font-bold px-2 py-0.5 rounded-full">${d.status}</span>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function setSosFilter(f) {
+  _sosFilter = f;
+  document.querySelectorAll('.sos-filter-btn').forEach(b => {
+    b.className = `sos-filter-btn${b.dataset.sf === f ? ' sf-active' : ''}`;
+  });
+  renderSOS(_allSosCases);
+}
+
+function renderSOS(cases) {
+  const el    = document.getElementById('sosList');
+  const count = document.getElementById('sosCount');
+
+  const open     = cases.filter(c => c.status === 'received' || !c.status);
+  const dispatched = cases.filter(c => c.status === 'dispatched');
+  const resolved = cases.filter(c => c.status === 'resolved');
+
+  const activeCount = open.length + dispatched.length;
+  count.textContent = activeCount
+    ? `${open.length} pending · ${dispatched.length} dispatched · ${resolved.length} resolved`
+    : resolved.length ? `All resolved (${resolved.length})` : 'No cases';
+
+  let filtered = cases;
+  if (_sosFilter === 'active')     filtered = open;
+  if (_sosFilter === 'dispatched') filtered = dispatched;
+  if (_sosFilter === 'resolved')   filtered = resolved;
+
+  if (!filtered.length) {
+    el.innerHTML = `<p class="text-xs text-slate-600">No ${_sosFilter === 'all' ? '' : _sosFilter + ' '}cases.</p>`;
+    return;
+  }
+
+  el.innerHTML = filtered.map(c => {
+    const caseId = c.case_id || c.id || '—';
+    const lat    = c.latitude  ?? c.lat;
+    const lng    = c.longitude ?? c.lng;
+    const hasPinCoords = lat && lng;
+    const mapsUrl = hasPinCoords
+      ? `https://maps.google.com/maps?q=${lat},${lng}&z=17&t=m`
+      : c.address
+        ? `https://maps.google.com/?q=${encodeURIComponent(c.address)}`
+        : `https://maps.google.com/?q=${encodeURIComponent((c.district||'Kuala Lumpur') + ', Malaysia')}`;
+    const pinLabel  = hasPinCoords ? '📍 Exact GPS pin' : c.address ? '📍 Address pin' : '📍 District area';
+    const isResolved = c.status === 'resolved';
+    const isDispatched = c.status === 'dispatched';
+
+    const statusColor = isResolved ? 'text-green-400'
+      : isDispatched ? 'text-blue-400' : 'text-orange-400';
+    const statusLabel = isResolved ? 'RESOLVED' : isDispatched ? 'DISPATCHED' : 'PENDING';
+
+    let actionBtn = '';
+    if (isResolved) {
+      actionBtn = `<span class="text-xs text-green-400 shrink-0 font-semibold">✅ Done</span>`;
+    } else if (isDispatched) {
+      actionBtn = `
+        <button onclick="openResolve('${caseId}')" class="resolve-btn shrink-0">✅ Resolved</button>`;
+    } else {
+      actionBtn = `
+        <button onclick="openDispatch('${caseId}')" class="dispatch-btn shrink-0">🚁 Dispatch</button>`;
+    }
+
+    return `
+      <div class="sos-card ${isResolved ? 'resolved-card' : ''}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="text-red-400 font-bold text-xs">🆘 ${caseId}</span>
+              <span class="text-xs ${statusColor} font-semibold">${statusLabel}</span>
+              ${hasPinCoords ? `<span class="text-xs text-slate-600">${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}</span>` : ''}
+            </div>
+            <p class="text-xs text-white font-semibold">${c.district || 'Unknown District'}</p>
+            <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">${c.message || c.situation || 'No details'}</p>
+            <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+              ${c.people_count ? `<span class="text-xs text-yellow-400">👥 ${c.people_count} people</span>` : ''}
+              <span class="text-xs text-slate-600">${c.timestamp ? new Date(c.timestamp).toLocaleTimeString('en-MY') : ''}</span>
+              <a href="${mapsUrl}" target="_blank" class="text-xs text-blue-400 hover:text-blue-300 font-semibold">${pinLabel}</a>
+            </div>
+          </div>
+          ${actionBtn}
+        </div>
+        ${c.team    ? `<div class="mt-1.5 text-xs text-slate-400 border-t border-slate-800 pt-1.5">Team: <span class="text-white font-semibold">${c.team}</span></div>` : ''}
+        ${isResolved && c.outcome ? `<div class="mt-1 text-xs text-green-400 border-t border-slate-800 pt-1">Outcome: ${c.outcome}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function renderAgentFeed(comms) {
+  const feed = document.getElementById('agentFeed');
+  if (!comms.length) {
+    feed.innerHTML = '<p class="text-xs text-slate-600">Waiting for first pipeline cycle…</p>';
+    return;
+  }
+  feed.innerHTML = comms.map(m => {
+    const agClass = AG_CLASS[m.from] || 'ag-Data';
+    const desc    = AG_DESC[m.from] || '';
+    const p = m.payload || {};
+    let detail = '';
+    if (p.districts_collected !== undefined)
+      detail = `${p.districts_collected} districts polled · ${p.raining_now ?? 0} currently raining · avg ${(p.avg_rainfall||0).toFixed(1)}mm`;
+    else if (p.storm_warnings !== undefined)
+      detail = `${p.storm_warnings} storm cell${p.storm_warnings!==1?'s':''} detected · peak incoming ${(p.max_incoming_mm||0).toFixed(1)}mm`;
+    else if (p.max_anomaly !== undefined)
+      detail = `Anomaly score: ${(p.max_anomaly||0).toFixed(2)} · Flagged: ${(p.flagged_districts||[]).join(', ')||'none'}`;
+    else if (p.risk_level && p.method)
+      detail = `${p.method} → <span style="color:${RISK_COLOR[p.risk_level]||'#fff'}">${p.risk_level}</span> · confidence ${Math.round((p.confidence||0)*100)}%`;
+    else if (p.actions)
+      detail = p.actions.join(' · ');
+    return `
+      <div class="bg-slate-900/60 rounded-lg p-2.5 border border-slate-800">
+        <div class="flex items-center gap-2 mb-1 flex-wrap">
+          <span class="agent-from ${agClass}">${m.from}</span>
+          <span class="text-slate-600 text-xs">→</span>
+          <span class="text-slate-400 text-xs">${m.to}</span>
+          <span class="ml-auto text-slate-600 text-xs">${m.timestamp}</span>
+        </div>
+        <p class="text-xs text-slate-300 font-medium">${m.summary}</p>
+        ${detail ? `<p class="text-xs text-slate-500 mt-0.5">${detail}</p>` : ''}
+        ${desc ? `<p class="text-xs text-slate-700 mt-1 italic leading-relaxed">${desc}</p>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function renderEvacSummary(districts) {
+  const el = document.getElementById('evacSummary');
+  const centres = [];
+  for (const d of districts) {
+    for (const c of (d.evac_centre_list || [])) {
+      centres.push({ ...c, district: d.district, status: d.status });
+    }
+  }
+  if (!centres.length) {
+    el.innerHTML = '<p class="text-xs text-slate-500 col-span-4">No evacuation centres available.</p>';
+    return;
+  }
+  el.innerHTML = centres.map(c => {
+    const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(c.address)}`;
+    const statusBorder = c.status === 'DANGER' ? 'border-red-900' : c.status === 'WARNING' ? 'border-yellow-900' : 'border-slate-700';
+    return `
+      <div class="bg-slate-900/50 rounded-lg p-2.5 border ${statusBorder} flex flex-col gap-1">
+        <div class="text-xs font-bold text-white leading-tight">${c.name}</div>
+        <div class="text-xs text-slate-400 leading-tight">${c.district}</div>
+        <div class="text-xs text-green-400">${(c.capacity||0).toLocaleString()} capacity</div>
+        ${c.contact ? `<div class="text-xs text-slate-500">${c.contact}</div>` : ''}
+        <a href="${mapsUrl}" target="_blank"
+           class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-0.5">
+          📍 View location
+        </a>
+      </div>`;
+  }).join('');
+}
+
+function openResolve(caseId) {
+  _resolveCaseId = caseId;
+  document.getElementById('resolveTarget').textContent = `Case ID: ${caseId}`;
+  document.getElementById('resolveNotes').value = '';
+  document.getElementById('resolveModal').classList.remove('hidden');
+}
+function closeResolve() {
+  document.getElementById('resolveModal').classList.add('hidden');
+  _resolveCaseId = null;
+}
+async function confirmResolve() {
+  if (!_resolveCaseId) return;
+  const outcome = document.getElementById('resolveOutcome').value;
+  const notes   = document.getElementById('resolveNotes').value;
+  try {
+    await fetch(`/api/rescue/resolve/${_resolveCaseId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outcome, officer: 'Operations Centre', notes }),
+    });
+  } catch(e) { console.warn('Resolve API unavailable:', e); }
+  closeResolve();
+  refresh();
+}
+
+function openDispatch(caseId) {
+  _dispatchCaseId = caseId;
+  document.getElementById('dispatchTarget').textContent = `Case ID: ${caseId}`;
+  document.getElementById('dispatchNotes').value = '';
+  document.getElementById('dispatchModal').classList.remove('hidden');
+}
+function closeDispatch() {
+  document.getElementById('dispatchModal').classList.add('hidden');
+  _dispatchCaseId = null;
+}
+async function confirmDispatch() {
+  if (!_dispatchCaseId) return;
+  const team  = document.getElementById('dispatchTeam').value;
+  const notes = document.getElementById('dispatchNotes').value;
+  try {
+    await fetch(`/api/rescue/dispatch/${_dispatchCaseId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ team, notes }),
+    });
+  } catch(e) { console.warn('Dispatch API unavailable:', e); }
+  closeDispatch();
+  refresh();
+}
+function scrollToSOS() {
+  document.getElementById('sosPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+function showToast(msg, color) {
+  const t = document.createElement('div');
+  t.style.cssText = `position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:${color||'#1e293b'};border:1px solid #334155;color:#fff;
+    font-size:12px;font-weight:600;padding:10px 20px;border-radius:12px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:99;white-space:nowrap;
+    transition:opacity 0.3s ease`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 4000);
+}
+
+async function triggerDemo() {
+  const btn = document.getElementById('demoBtn');
+  btn.textContent = '⏳ Injecting…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/demo/inject', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await res.json();
+    const rl    = d.assessment?.risk_level || '?';
+    const color = rl === 'DANGER' ? '#7f1d1d' : rl === 'WARNING' ? '#422006' : '#1e3a5f';
+    showToast(`🎯 Demo [${d.scenario}]: ${d.district} — ${d.rainfall_rate}mm/hr · ${rl} risk`, color);
+    await refresh();
+  } catch(e) {
+    showToast('⚠ Demo injection failed — is the backend running?', '#3b0707');
+  } finally {
+    btn.textContent = '🎯 Demo Spike';
+    btn.disabled = false;
+  }
+}
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

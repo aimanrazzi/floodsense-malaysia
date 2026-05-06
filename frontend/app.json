@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Scam Detector",
-    "slug": "scam-detector",
-    "scheme": "scamdetector",
+    "name": "FloodSense",
+    "slug": "floodsense-malaysia",
+    "scheme": "floodsense",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",

@@ -1,28 +1,72 @@
-import { auth } from "../firebase";
 import { BACKEND_URL } from "../config";
 
-/**
- * Authenticated POST to the backend.
- * Automatically attaches the Firebase ID token as Authorization: Bearer <token>.
- * Falls back gracefully if user is not signed in.
- */
-export async function securePost(path, body, signal) {
-  const headers = { "Content-Type": "application/json" };
+// ── HTTP helpers ─────────────────────────────────────────────────────────────
 
-  try {
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      const token = await currentUser.getIdToken(true);
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-  } catch {
-    // Token fetch failed — send without auth (backend will reject if auth is enforced)
-  }
-
-  return fetch(`${BACKEND_URL}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
+async function get(path) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status} on GET ${path}`);
+  return res.json();
 }
+
+async function post(path, body) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} on POST ${path}`);
+  return res.json();
+}
+
+// ── Flood API ─────────────────────────────────────────────────────────────────
+
+export const floodApi = {
+  /** Current JPS readings per district with colour-coded risk status. */
+  getLevels: () => get("/api/flood/levels"),
+
+  /** Run ML + Claude on provided readings (or latest cached ones if omitted). */
+  analyze: (readings) => post("/api/flood/analyze", readings ? { readings } : {}),
+
+  /** Last 20 alert events from Firestore (or in-memory fallback). */
+  getAlerts: () => get("/api/flood/alerts"),
+
+  /** Nearest evacuation centres. Pass district string or omit for all. */
+  getEvacuationCenters: (district) =>
+    get(`/api/flood/evacuate${district ? `?district=${encodeURIComponent(district)}` : ""}`),
+
+  /**
+   * Bypass the 60-second scheduler for demo — inject a spike immediately.
+   * @param {string} district
+   * @param {number} riverLevel   metres
+   * @param {number} rainfallRate mm/hr
+   */
+  demoInject: (district, riverLevel, rainfallRate) =>
+    post("/api/demo/inject", {
+      district,
+      river_level: riverLevel,
+      rainfall_rate: rainfallRate,
+    }),
+
+  /**
+   * Submit a rescue / help request on behalf of a citizen in distress.
+   * Returns { case_id, message, nearest_centre, emergency_contacts }.
+   */
+  requestRescue: (district, situation, peopleCount, notes, latitude, longitude) =>
+    post("/api/rescue/request", {
+      district,
+      situation,
+      people_count: peopleCount,
+      notes: notes || "",
+      ...(latitude  != null && { latitude }),
+      ...(longitude != null && { longitude }),
+    }),
+
+  /** All active SOS rescue cases — for the rescuer dashboard. */
+  getRescueCases: () => get("/api/rescue/cases"),
+
+  /** Liveness check. */
+  health: () => get("/health"),
+};

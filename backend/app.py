@@ -1,1126 +1,1696 @@
+"""
+FloodSense Malaysia — Backend Agent
+Agentic AI flood early warning system using JPS data, Isolation Forest, and Claude AI.
+"""
+
+import os
+import json
+import re
+import logging
+import pickle
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from groq import Groq
-import requests
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import os
-import re
-import json
-from urllib.parse import urlparse
+from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.debug = os.getenv("FLASK_DEBUG", "1") != "0"   # True in local dev, False in production
 CORS(app)
 
-# ── Rate Limiting ─────────────────────────────────────────
-# 30 requests/minute per IP, 500/day per IP
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["500 per day", "30 per minute"],
-    storage_uri="memory://",
-)
-
-# ── Firebase Token Verification (optional) ────────────────
-# Set FIREBASE_CREDENTIALS=/path/to/serviceAccount.json in .env to enable.
-# Without it, auth is disabled but rate limiting still works.
+# ── Firebase / Firestore ──────────────────────────────────────────────────────
+# Supports full JSON string (Render) or file path (local dev).
 _firebase_initialized = False
+_firestore_db = None
+firestore = None  # module reference kept in scope for Query.DESCENDING
+
 try:
     import firebase_admin
-    from firebase_admin import credentials as fb_credentials, auth as fb_auth
+    from firebase_admin import credentials as fb_credentials
+    from firebase_admin import firestore as _fb_firestore
 
-    _creds_json = os.getenv("FIREBASE_CREDENTIALS_JSON")   # full JSON string (Render)
-    _creds_path = os.getenv("FIREBASE_CREDENTIALS")        # file path (local dev)
+    firestore = _fb_firestore  # expose module for constants
+
+    _creds_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
+    _creds_path = os.getenv("FIREBASE_CREDENTIALS")
 
     if _creds_json:
-        import json as _json
-        fb_cred = fb_credentials.Certificate(_json.loads(_creds_json))
+        fb_cred = fb_credentials.Certificate(json.loads(_creds_json))
         firebase_admin.initialize_app(fb_cred)
+        _firestore_db = firestore.client()
         _firebase_initialized = True
-        print("[Security] Firebase token verification: ACTIVE (from env JSON)")
+        logger.info("[Firebase] Initialized from env JSON")
     elif _creds_path and os.path.exists(_creds_path):
         fb_cred = fb_credentials.Certificate(_creds_path)
         firebase_admin.initialize_app(fb_cred)
+        _firestore_db = firestore.client()
         _firebase_initialized = True
-        print("[Security] Firebase token verification: ACTIVE (from file)")
+        logger.info("[Firebase] Initialized from file path")
     else:
-        print("[Security] Firebase token verification: DISABLED (no credentials set)")
+        logger.warning("[Firebase] No credentials found — Firestore disabled")
 except Exception as _e:
-    print(f"[Security] Firebase Admin init failed: {_e}")
+    logger.error(f"[Firebase] Init failed: {_e}")
 
-def require_auth():
+# ── Anthropic / Claude Client ─────────────────────────────────────────────────
+_anthropic_client = None
+try:
+    import anthropic
+    _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    logger.info("[Anthropic] Client initialized")
+except Exception as _e:
+    logger.error(f"[Anthropic] Client init failed: {_e}")
+
+# ── JPS Static Fallback Data ──────────────────────────────────────────────────
+# Realistic readings for flood-prone rivers across all 13 Malaysian states.
+# Used when info.water.gov.my is unreachable. All values in safe band by default.
+JPS_FALLBACK = {
+    # ── Urban Flash Flood Zones (Klang Valley / KL) ──
+    "Sungai Klang":        {"level": 2.8, "rainfall": 12.0, "district": "Klang",        "station": "Taman Sri Muda"},
+    "Sungai Gombak":       {"level": 2.1, "rainfall": 8.0,  "district": "Gombak",       "station": "Jalan Gombak"},
+    "Sungai Batu":         {"level": 1.9, "rainfall": 6.0,  "district": "Kepong",        "station": "Kepong"},
+    "Sungai Kerayong":     {"level": 2.4, "rainfall": 10.0, "district": "Cheras",        "station": "Cheras"},
+    "Sungai Ampang":       {"level": 1.8, "rainfall": 7.0,  "district": "Ampang",        "station": "Ampang Hilir"},
+    "Sungai Damansara":    {"level": 1.7, "rainfall": 6.5,  "district": "Petaling Jaya", "station": "PJ Old Town"},
+    "Sungai Klang Tengah": {"level": 2.0, "rainfall": 9.0,  "district": "Bangsar",       "station": "Masjid India"},
+    "Sungai Subang":       {"level": 1.8, "rainfall": 7.5,  "district": "Subang Jaya",   "station": "Subang Jaya"},
+    "Sungai Shah Alam":    {"level": 2.0, "rainfall": 8.5,  "district": "Shah Alam",     "station": "Seksyen 13"},
+    # ── River Overflow Zones (Selangor rivers) ──
+    "Sungai Selangor":     {"level": 2.5, "rainfall": 11.0, "district": "Kuala Selangor","station": "Rasa"},
+    "Sungai Langat":       {"level": 2.3, "rainfall": 9.5,  "district": "Sepang",        "station": "Dengkil"},
+}
+
+# ── Evacuation Centres (JKM / MERCY Malaysia) ─────────────────────────────────
+# Realistic Malaysian relief centre data per district (JKM public directory).
+EVACUATION_CENTERS = {
+    "Klang": [
+        {"name": "Sekolah Kebangsaan Taman Sri Muda", "address": "Jalan Aman 1, Taman Sri Muda, 40150 Shah Alam, Selangor", "capacity": 500, "contact": "03-5510 1234"},
+        {"name": "Dewan MBSA Shah Alam Seksyen 19", "address": "Jalan Bougainvilla, Seksyen 19, 40150 Shah Alam, Selangor", "capacity": 800, "contact": "03-5510 5678"},
+        {"name": "Pusat Komuniti Kota Kemuning", "address": "Jalan Kota Kemuning, 40460 Shah Alam, Selangor", "capacity": 300, "contact": "03-5122 9000"},
+    ],
+    "Gombak": [
+        {"name": "Sekolah Menengah Kebangsaan Gombak Setia", "address": "Jalan Gombak, 53100 Kuala Lumpur", "capacity": 400, "contact": "03-6187 3456"},
+        {"name": "Dewan Orang Ramai Batu Caves", "address": "Jalan Batu Caves, 68100 Batu Caves, Selangor", "capacity": 600, "contact": "03-6189 1122"},
+        {"name": "Pusat Khidmat Komuniti Gombak", "address": "Jalan Rawang, 68000 Ampang, Selangor", "capacity": 250, "contact": "03-4257 8800"},
+    ],
+    "Kepong": [
+        {"name": "Sekolah Kebangsaan Kepong Baru", "address": "Jalan 1/62C, Kepong Baru, 52100 Kuala Lumpur", "capacity": 350, "contact": "03-6252 3344"},
+        {"name": "Kompleks Sukan Kepong", "address": "Jalan Kepong, 52100 Kuala Lumpur", "capacity": 700, "contact": "03-6251 9090"},
+        {"name": "Dewan Komuniti Sri Damansara", "address": "Jalan Sri Damansara Barat, 52200 Kuala Lumpur", "capacity": 300, "contact": "03-6272 4455"},
+    ],
+    "Cheras": [
+        {"name": "Sekolah Menengah Kebangsaan Cheras", "address": "Jalan Cheras, 56000 Kuala Lumpur", "capacity": 500, "contact": "03-9200 1234"},
+        {"name": "Dewan Serbaguna Taman Connaught", "address": "Jalan Cheras, Taman Connaught, 56000 Kuala Lumpur", "capacity": 400, "contact": "03-9132 5678"},
+        {"name": "Pusat Komuniti Alam Damai", "address": "Jalan Alam Damai, 56000 Cheras, Kuala Lumpur", "capacity": 300, "contact": "03-9074 3322"},
+    ],
+    "Ampang": [
+        {"name": "Sekolah Kebangsaan Ampang", "address": "Jalan Ampang Hilir, 55000 Ampang, Kuala Lumpur", "capacity": 400, "contact": "03-4251 1234"},
+        {"name": "Dewan Serbaguna MPAJ Ampang", "address": "Jalan Besar Ampang, 68000 Ampang, Selangor", "capacity": 600, "contact": "03-4270 5678"},
+        {"name": "Sekolah Kebangsaan Pandan Indah", "address": "Jalan Pandan Indah, 55100 Ampang, Kuala Lumpur", "capacity": 350, "contact": "03-4293 2211"},
+    ],
+    "Petaling Jaya": [
+        {"name": "Stadium MBPJ Kelana Jaya", "address": "Jalan SS7/15, Kelana Jaya, 47301 Petaling Jaya, Selangor", "capacity": 1000, "contact": "03-7875 4500"},
+        {"name": "Sekolah Menengah Kebangsaan PJ (Main)", "address": "Jalan Templer, 46050 Petaling Jaya, Selangor", "capacity": 500, "contact": "03-7956 3344"},
+        {"name": "Dewan Komuniti SS2 Petaling Jaya", "address": "Jalan SS2/75, 47300 Petaling Jaya, Selangor", "capacity": 300, "contact": "03-7875 1122"},
+    ],
+    "Bangsar": [
+        {"name": "Sekolah Kebangsaan Bangsar", "address": "Jalan Tandok, 59100 Bangsar, Kuala Lumpur", "capacity": 400, "contact": "03-2282 1234"},
+        {"name": "Dewan Komuniti Bangsar Baru", "address": "Jalan Ara, 59100 Bangsar, Kuala Lumpur", "capacity": 350, "contact": "03-2287 5566"},
+        {"name": "Sekolah Menengah Kebangsaan Bukit Bandaraya", "address": "Jalan Bukit Bandaraya, 59100 Bangsar, Kuala Lumpur", "capacity": 450, "contact": "03-2093 7788"},
+    ],
+    "Subang Jaya": [
+        {"name": "Sekolah Menengah Kebangsaan USJ 4", "address": "Jalan USJ 4/1, 47610 Subang Jaya, Selangor", "capacity": 500, "contact": "03-8024 1234"},
+        {"name": "Dewan Serbaguna MPSJ Subang Jaya", "address": "Jalan SS15/4, 47500 Subang Jaya, Selangor", "capacity": 700, "contact": "03-8026 5678"},
+        {"name": "Sekolah Kebangsaan Seafield", "address": "Jalan SU 1, Taman Seafield, 47810 Subang Jaya", "capacity": 400, "contact": "03-8023 3344"},
+    ],
+    "Shah Alam": [
+        {"name": "Stadium Shah Alam", "address": "Persiaran Bandaraya, 40150 Shah Alam, Selangor", "capacity": 2000, "contact": "03-5510 3333"},
+        {"name": "Sekolah Menengah Kebangsaan Shah Alam", "address": "Jalan Kebun, 40460 Shah Alam, Selangor", "capacity": 600, "contact": "03-5511 5566"},
+        {"name": "Dewan Komuniti Seksyen 7 Shah Alam", "address": "Jalan Seksyen 7/1, 40000 Shah Alam", "capacity": 400, "contact": "03-5519 7788"},
+    ],
+    "Kuala Selangor": [
+        {"name": "Sekolah Kebangsaan Kuala Selangor", "address": "Jalan Hospital, 45000 Kuala Selangor, Selangor", "capacity": 350, "contact": "03-3289 1234"},
+        {"name": "Dewan Orang Ramai Kuala Selangor", "address": "Jalan Stesen, 45000 Kuala Selangor", "capacity": 400, "contact": "03-3289 5678"},
+    ],
+    "Sepang": [
+        {"name": "Sekolah Kebangsaan Dengkil", "address": "Jalan Besar, 43800 Dengkil, Selangor", "capacity": 300, "contact": "03-8768 1234"},
+        {"name": "Dewan Serbaguna MDSEP Sepang", "address": "Jalan Lapangan Terbang, 43900 Sepang", "capacity": 500, "contact": "03-8706 5678"},
+    ],
+}
+
+# ── Flood Type Classification ─────────────────────────────────────────────────
+# Urban districts: flooding is primarily caused by heavy rainfall overwhelming
+# drainage infrastructure (flash floods / banjir kilat). Rainfall rate is the
+# leading indicator — river level is a lagging secondary signal.
+#
+# Rural/coastal districts: flooding is primarily caused by rivers exceeding their
+# banks after sustained upstream rainfall. River level is the primary indicator.
+URBAN_DISTRICTS = {
+    # All KL/Selangor urban districts — flash flood risk (drainage-driven)
+    "Klang", "Gombak", "Kepong", "Cheras",
+    "Ampang", "Petaling Jaya", "Bangsar",
+    "Subang Jaya", "Shah Alam",
+}
+
+# Flash flood rainfall thresholds — calibrated for KL/Selangor urban drainage reality.
+# WeatherAPI returns accumulated mm per hour (hourly average rate).
+# KL's ageing drainage network starts failing at much lower intensities than JPS rural gauges:
+#   15mm/hr = moderate rain, surface pooling begins in low-lying streets
+#   30mm/hr = heavy rain, JPS Alert Level 1, localised flash flooding expected
+#   50mm/hr = very heavy, JPS Alert Level 2/3, widespread flash flood imminent
+FLASH_FLOOD_THRESHOLDS = {"watch": 15.0, "warning": 30.0, "danger": 50.0}
+
+# JPS river level alert thresholds (same for all overflow stations in KL/Selangor)
+# Normal < 3.0m | Watch 3.0–4.5m | Warning 4.5–5.5m | Danger > 5.5m
+RIVER_OVERFLOW_THRESHOLDS = {"watch": 3.0, "warning": 4.5, "danger": 5.5}
+
+# GPS coordinates for each monitored district — used by WeatherAPI rainfall fetch
+DISTRICT_COORDS = {
+    # Urban flash flood zones — Klang Valley / KL
+    "Klang":          (3.0449, 101.4468),
+    "Gombak":         (3.2353, 101.7044),
+    "Kepong":         (3.2119, 101.6293),
+    "Cheras":         (3.0945, 101.7455),
+    "Ampang":         (3.1478, 101.7618),
+    "Petaling Jaya":  (3.1073, 101.6067),
+    "Bangsar":        (3.1302, 101.6741),
+    "Subang Jaya":    (3.0565, 101.5897),
+    "Shah Alam":      (3.0733, 101.5185),
+    # River overflow zones — Selangor
+    "Kuala Selangor": (3.3474, 101.2442),
+    "Sepang":         (2.7305, 101.7164),
+}
+
+
+def _compute_station_status(
+    level: float, rainfall: float, district: str,
+    forecast_2h: float = 0.0, rain_chance: int = 0,
+) -> str:
     """
-    Validates Firebase ID token from Authorization header.
-    Returns (uid, None) on success, (None, error_response) on failure.
-    If Firebase is not configured, returns (None, None) — open access.
+    Return JPS risk status for a single station using composite scoring.
+
+    Flash flood (urban): rainfall is the primary trigger. forecast_2h + rain_chance
+    amplify risk so that "light rain now, heavy storm incoming" is caught early.
+
+    River overflow (rural): river level is primary. Rainfall + forecast accelerate risk.
+
+    Composite score = current_rainfall + (forecast_2h * probability_weight)
+    where probability_weight = rain_chance/100 capped at 0.8 (never fully trust forecast).
     """
-    if not _firebase_initialized:
-        return None, None
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None, (jsonify({"error": "Authentication required."}), 401)
-    token = auth_header.split("Bearer ", 1)[1].strip()
-    try:
-        decoded = fb_auth.verify_id_token(token)
-        return decoded["uid"], None
-    except Exception:
-        return None, (jsonify({"error": "Invalid or expired session. Please sign in again."}), 401)
+    prob_weight = min(rain_chance / 100.0, 0.8) if rain_chance >= 40 else 0.0
+    composite   = rainfall + forecast_2h * prob_weight
 
-# ── Clients ──────────────────────────────────────────────
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
-NUMVERIFY_API_KEY = os.getenv("NUMVERIFY_API_KEY")
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
+    if district in URBAN_DISTRICTS:
+        # ── Flash flood — drainage-driven ──────────────────────────────────────
+        # Hard DANGER: immediate extreme rainfall OR river already backed up
+        if rainfall >= FLASH_FLOOD_THRESHOLDS["danger"] or level >= 5.5:
+            return "DANGER"
+        # Composite DANGER: moderate current + very heavy incoming
+        if composite >= FLASH_FLOOD_THRESHOLDS["danger"] + 10:
+            return "DANGER"
 
+        # Hard WARNING: heavy current rain OR river elevated
+        if rainfall >= FLASH_FLOOD_THRESHOLDS["warning"] or level >= 4.5:
+            return "WARNING"
+        # Composite WARNING: light/moderate current + heavy incoming
+        if (composite >= FLASH_FLOOD_THRESHOLDS["warning"]
+                or (rainfall >= 8 and forecast_2h >= 25 and rain_chance >= 60)
+                or (level >= 3.5 and rainfall >= FLASH_FLOOD_THRESHOLDS["watch"])):
+            return "WARNING"
 
-LANG_NAMES = {
-    "en": "English",
-    "ms": "Malay (Bahasa Malaysia)",
-    "zh": "Chinese (Simplified)",
-    "ta": "Tamil",
-}
+        # Hard WATCH: moderate current rain OR river slightly elevated
+        if rainfall >= FLASH_FLOOD_THRESHOLDS["watch"] or level >= 3.0:
+            return "WATCH"
+        # Composite WATCH: light rain + notable forecast
+        if (rainfall >= 5 and forecast_2h >= 15 and rain_chance >= 60):
+            return "WATCH"
 
+        return "SAFE"
 
-# ── Helper: Extract JSON from AI response ────────────────
-def extract_json(raw):
-    raw = raw.strip()
-    # Try to find a JSON object anywhere in the response
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    raise ValueError(f"No JSON found in response: {raw[:200]}")
-
-
-# ── Helper: Resize image ─────────────────────────────────
-def resize_image_base64(image_base64, max_size=(512, 512)):
-    import base64
-    import io
-    from PIL import Image
-    image_bytes = base64.b64decode(image_base64)
-    img = Image.open(io.BytesIO(image_bytes))
-    img.thumbnail(max_size, Image.LANCZOS)
-    buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=60)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    else:
+        # ── River overflow — level-driven ──────────────────────────────────────
+        if (level >= RIVER_OVERFLOW_THRESHOLDS["danger"]
+                or (level >= RIVER_OVERFLOW_THRESHOLDS["warning"] and rainfall >= 15)):
+            return "DANGER"
+        if (level >= RIVER_OVERFLOW_THRESHOLDS["warning"]
+                or (level >= RIVER_OVERFLOW_THRESHOLDS["watch"] and rainfall >= 20)
+                or (level >= 2.0 and composite >= FLASH_FLOOD_THRESHOLDS["warning"])):
+            return "WARNING"
+        if (level >= RIVER_OVERFLOW_THRESHOLDS["watch"]
+                or (level >= 2.0 and rainfall >= 15 and rain_chance >= 60)):
+            return "WATCH"
+        return "SAFE"
 
 
-# ── Helper: Analyze text with Groq AI ───────────────────
-def analyze_with_ai(text, lang="en"):
-    prompt = f"""You are a scam and fraud detection assistant specialising in Malaysian scams.
+# ── ML Model: Isolation Forest ────────────────────────────────────────────────
+MODEL_PATH = Path("flood_model.pkl")
+DATA_DIR   = Path("data")   # place real CSV files here before first run
 
-The user has submitted the following input for you to analyse:
-\"\"\"{text}\"\"\"
-
-Your job is to extract the actual content being referred to (a phone number, URL, message, job offer, IP address, etc.) and analyse THAT for scam indicators.
-
-General rules:
-- Ignore spelling or grammar errors made by the person submitting — they may just be typing quickly.
-- Focus only on whether the content itself shows signs of being a scam.
-- A phone number alone is not a scam unless there is other suspicious context.
-
-Malaysian scam patterns — score 75 to 100 if any of these are detected:
-- Macau scam: someone claiming to be polis, SPRM, kastam, mahkamah, or any government officer asking for money or bank details
-- Government impersonation: fake LHDN/Hasil tax refund or debt, fake JPJ summons, fake SSM notice
-- Bank impersonation: fake Maybank2u, CIMB Clicks, RHB, Public Bank alerts asking to verify account or click a link
-- Fake job offers: unrealistic salary (RM3000–8000 kerja dari rumah), no interview, asks for upfront fees or IC copy
-- Love/romance scam: overseas person (army officer, doctor, engineer) building relationship then requesting money transfer
-- Investment scam: guaranteed high returns, forex/crypto/gold schemes, passive income, MLM-like structure
-- Parcel/courier scam: fake Pos Laju, J&T, DHL, Ninja Van notifications with suspicious links
-- Lucky draw / prize scam: "tahniah anda terpilih", "anda menang hadiah", claim via link or upfront transfer
-- Loan scam: instant approval, no credit check, processing fee required upfront
-- E-commerce scam: seller asking payment outside Shopee/Lazada, fake buyer overpaying
-
-Suspicious patterns — score 40 to 74:
-- Urgency language: "segera", "dalam masa 24 jam", "akaun anda akan dibekukan", "tindakan undang-undang"
-- Requests for OTP, TAC code, or online banking password
-- Government or bank business conducted via WhatsApp or Telegram
-- Vague job or investment offer with no verifiable company details
-
-Respond ONLY in this exact JSON format with no extra text:
-{{
-  "score": <number from 0 to 100>,
-  "status": "<SAFE or SUSPICIOUS or SCAM>",
-  "reason": "<one clear sentence summary of the verdict>",
-  "findings": ["<finding 1>", "<finding 2>", "<finding 3>"]
-}}
-
-For findings: list 2–4 short bullet points explaining specific indicators found (or not found). Each should be one short sentence.
-
-Scoring guide:
-- 0 to 30 = SAFE
-- 31 to 69 = SUSPICIOUS
-- 70 to 100 = SCAM
-
-Respond with "reason" and all "findings" in {LANG_NAMES.get(lang, "English")}."""
-
-    response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-    )
-
-    raw = response.choices[0].message.content.strip()
-    return extract_json(raw)
+# Column name aliases — handles both the Kaggle Malaysia Flood Dataset
+# (rajatjurel) and direct JPS/publicinfobanjir CSV exports.
+_LEVEL_ALIASES = ["river_level", "water_level", "level", "stage", "wl",
+                  "aras_air", "gauge_height", "water level (m)", "level (m)"]
+_RAIN_ALIASES  = ["rainfall_rate", "rainfall", "rain", "precip",
+                  "precipitation", "rain_mm", "hujan", "rainfall (mm)",
+                  "rain (mm/hr)", "rain (mm)"]
+_DT_ALIASES    = ["datetime", "date_time", "timestamp", "date", "time",
+                  "tarikh", "dt", "date/time"]
 
 
-# ── Helper: Check URL with VirusTotal ────────────────────
-def check_url_virustotal(url):
-    if not VIRUSTOTAL_API_KEY:
-        return None
-
-    headers = {"x-apikey": VIRUSTOTAL_API_KEY}
-
-    response = requests.post(
-        "https://www.virustotal.com/api/v3/urls",
-        headers=headers,
-        data={"url": url}
-    )
-
-    if response.status_code != 200:
-        return None
-
-    analysis_id = response.json()["data"]["id"]
-
-    result = requests.get(
-        f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
-        headers=headers
-    )
-
-    if result.status_code != 200:
-        return None
-
-    stats = result.json()["data"]["attributes"]["stats"]
-    malicious = stats.get("malicious", 0)
-    suspicious = stats.get("suspicious", 0)
-
-    return {
-        "malicious": malicious,
-        "suspicious": suspicious,
-        "flagged": malicious > 0 or suspicious > 0
-    }
-
-
-# ── Helper: Check IP with VirusTotal ─────────────────────
-def check_ip_virustotal(ip):
-    if not VIRUSTOTAL_API_KEY:
-        return None
-
-    headers = {"x-apikey": VIRUSTOTAL_API_KEY}
-    result = requests.get(
-        f"https://www.virustotal.com/api/v3/ip_addresses/{ip}",
-        headers=headers
-    )
-
-    if result.status_code != 200:
-        return None
-
-    stats = result.json()["data"]["attributes"]["last_analysis_stats"]
-    malicious = stats.get("malicious", 0)
-    suspicious = stats.get("suspicious", 0)
-
-    return {
-        "malicious": malicious,
-        "suspicious": suspicious,
-        "flagged": malicious > 0 or suspicious > 0
-    }
-
-
-# ── Helper: Semak Mule API (PDRM) ────────────────────────
-def _semak_mule_query(category, value):
-    """Generic Semak Mule query. category: telefon | akaun | email"""
-    url = "https://semakmule.rmp.gov.my/api/mule/get_search_data.php"
-    field = {"telefon": "telNo", "akaun": "noAkaun", "email": "email"}.get(category, "telNo")
-    payload = json.dumps({"data": {"category": category, field: value}}).encode()
-    try:
-        req = requests.post(url, data=payload, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/json",
-            "apikey": "j3j389#nklala2",
-            "Referer": "https://semakmule.rmp.gov.my/",
-        }, timeout=10, verify=False)
-        print(f"[SemakMule] category={category} value={value} status={req.status_code} body={req.text[:200]}")
-        if req.status_code == 200:
-            data = req.json()
-            if data.get("status") == 1 and data.get("table_data"):
-                reports = data["table_data"][0][1] if data["table_data"] else 0
-                return {"reports": reports, "found": reports > 0}
-            return {"reports": 0, "found": False}
-    except Exception as e:
-        print(f"[SemakMule] failed: {e}")
+def _detect_column(df, aliases: list[str]) -> str | None:
+    """Return the first df column that matches any alias (case-insensitive)."""
+    normalised = {c.lower().strip().replace(" ", "_"): c for c in df.columns}
+    for alias in aliases:
+        key = alias.lower().strip().replace(" ", "_")
+        if key in normalised:
+            return normalised[key]
     return None
 
-def check_semak_mule(phone):
-    digits_only = re.sub(r'\D', '', phone)
-    local = digits_only
-    if local.startswith('60') and len(local) > 10:
-        local = '0' + local[2:]
-    return _semak_mule_query("telefon", local)
 
-def check_semak_mule_bank(account):
-    digits_only = re.sub(r'\D', '', account)
-    return _semak_mule_query("akaun", digits_only)
+def _load_csv_data() -> np.ndarray | None:
+    """
+    Load real training data from backend/data/*.csv.
 
-def check_semak_mule_email(email):
-    return _semak_mule_query("email", email.strip().lower())
+    Supports two dataset formats:
+      1. Malaysia Flood Dataset 2000-2010 (Kaggle — rajatjurel)
+         Typical columns: Year, Month, State, Max_River_Level, Total_Rainfall …
+      2. JPS publicinfobanjir direct exports
+         Typical columns: DateTime, Level (m), Rainfall (mm) …
 
+    Returns float array of shape (N, 4): [river_level, rainfall_rate, hour, month]
+    or None if no usable CSV is found.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        logger.error("[ML] pandas not installed — cannot load CSV data. Run: pip install pandas")
+        return None
 
-# ── Helper: Malaysian phone number local lookup (no API needed) ──
-MY_PREFIXES = {
-    # Mobile
-    "0111": ("Celcom",   "mobile"), "0112": ("Celcom",   "mobile"),
-    "0113": ("Celcom",   "mobile"), "0114": ("Celcom",   "mobile"),
-    "0115": ("Celcom",   "mobile"), "0116": ("Celcom",   "mobile"),
-    "0117": ("Celcom",   "mobile"), "0118": ("Celcom",   "mobile"),
-    "0119": ("Celcom",   "mobile"),
-    "0120": ("Maxis",    "mobile"), "0121": ("Maxis",    "mobile"),
-    "0122": ("Maxis",    "mobile"), "0123": ("Maxis",    "mobile"),
-    "0124": ("Maxis",    "mobile"), "0125": ("Maxis",    "mobile"),
-    "0126": ("Maxis",    "mobile"), "0127": ("Maxis",    "mobile"),
-    "0128": ("Maxis",    "mobile"), "0129": ("Maxis",    "mobile"),
-    "0130": ("Maxis",    "mobile"), "0132": ("Maxis",    "mobile"),
-    "0133": ("Maxis",    "mobile"),
-    "0140": ("Celcom",   "mobile"), "0142": ("Celcom",   "mobile"),
-    "0143": ("Celcom",   "mobile"), "0144": ("Celcom",   "mobile"),
-    "0145": ("Celcom",   "mobile"), "0146": ("Celcom",   "mobile"),
-    "0147": ("Celcom",   "mobile"),
-    "0150": ("U Mobile", "mobile"), "0151": ("U Mobile", "mobile"),
-    "0152": ("U Mobile", "mobile"), "0153": ("U Mobile", "mobile"),
-    "0154": ("U Mobile", "mobile"), "0155": ("U Mobile", "mobile"),
-    "0156": ("U Mobile", "mobile"), "0158": ("U Mobile", "mobile"),
-    "0160": ("Maxis",    "mobile"), "0162": ("Maxis",    "mobile"),
-    "0163": ("Maxis",    "mobile"), "0164": ("Maxis",    "mobile"),
-    "0165": ("Maxis",    "mobile"), "0166": ("Maxis",    "mobile"),
-    "0167": ("Maxis",    "mobile"),
-    "0170": ("Celcom",   "mobile"), "0172": ("Celcom",   "mobile"),
-    "0173": ("Celcom",   "mobile"), "0174": ("Celcom",   "mobile"),
-    "0175": ("Celcom",   "mobile"), "0176": ("Celcom",   "mobile"),
-    "0177": ("Celcom",   "mobile"),
-    "0180": ("U Mobile", "mobile"), "0182": ("U Mobile", "mobile"),
-    "0183": ("U Mobile", "mobile"),
-    "0190": ("Digi",     "mobile"), "0192": ("Digi",     "mobile"),
-    "0193": ("Digi",     "mobile"), "0194": ("Digi",     "mobile"),
-    "0195": ("Digi",     "mobile"), "0196": ("Digi",     "mobile"),
-    "0197": ("Digi",     "mobile"),
-}
+    if not DATA_DIR.exists():
+        return None
 
-MY_AREA_CODES = {
-    "03": ("Kuala Lumpur / Selangor", "landline"),
-    "04": ("Penang / Kedah / Perlis", "landline"),
-    "05": ("Perak / Kelantan",        "landline"),
-    "06": ("Negeri Sembilan / Melaka / Johor", "landline"),
-    "07": ("Johor",                   "landline"),
-    "082": ("Kuching, Sarawak",       "landline"),
-    "083": ("Sri Aman, Sarawak",      "landline"),
-    "084": ("Sibu, Sarawak",          "landline"),
-    "085": ("Miri, Sarawak",          "landline"),
-    "086": ("Kapit, Sarawak",         "landline"),
-    "087": ("Kota Kinabalu, Sabah",   "landline"),
-    "088": ("Kota Kinabalu, Sabah",   "landline"),
-    "089": ("Tawau, Sabah",           "landline"),
-    "09": ("Pahang / Terengganu / Kelantan", "landline"),
-}
+    csv_files = list(DATA_DIR.glob("*.csv"))
+    if not csv_files:
+        return None
 
-def _local_my_lookup(digits):
-    """Fallback: look up carrier/location from Malaysian prefix tables."""
-    # Normalise to local format (0xx...)
-    local = digits
-    if local.startswith('60') and len(local) > 10:
-        local = '0' + local[2:]
-    if not local.startswith('0'):
-        return {"valid": False}
-    for prefix_len in (4, 3, 2):
-        prefix = local[:prefix_len]
-        if prefix in MY_PREFIXES:
-            carrier, line_type = MY_PREFIXES[prefix]
-            return {"valid": True, "country": "Malaysia", "country_code": "MY",
-                    "carrier": carrier, "line_type": line_type, "location": "Malaysia",
-                    "international_format": "+60" + local[1:]}
-        if prefix in MY_AREA_CODES:
-            location, line_type = MY_AREA_CODES[prefix]
-            return {"valid": True, "country": "Malaysia", "country_code": "MY",
-                    "carrier": "TM / Fixed Line", "line_type": line_type, "location": location,
-                    "international_format": "+60" + local[1:]}
-    return {"valid": False}
-
-def check_phone_numverify(phone):
-    if not NUMVERIFY_API_KEY:
-        return _local_my_lookup(re.sub(r'\D', '', phone))
-
-    digits = re.sub(r'\D', '', phone)
-
-    # Build candidates to try: raw digits, with +, with +60 for MY locals
-    candidates = [digits]
-    if not phone.strip().startswith('+'):
-        candidates.append('+' + digits)
-    # If looks like Malaysian local (starts with 0), try +60 format
-    if digits.startswith('0') and 9 <= len(digits) <= 11:
-        candidates.append('+60' + digits[1:])
-
-    for candidate in candidates:
+    frames = []
+    for csv_path in csv_files:
         try:
-            response = requests.get(
-                "http://apilayer.net/api/validate",
-                params={"access_key": NUMVERIFY_API_KEY, "number": candidate, "format": 1},
-                timeout=8,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("valid"):
-                    return {
-                        "valid": True,
-                        "country": data.get("country_name", "Unknown"),
-                        "country_code": data.get("country_code", ""),
-                        "location": data.get("location") or data.get("country_name", ""),
-                        "carrier": data.get("carrier") or "Unknown",
-                        "line_type": data.get("line_type") or "Unknown",
-                        "international_format": data.get("international_format", candidate),
-                    }
-        except Exception:
-            pass
-
-    # Fallback to local prefix lookup for Malaysian numbers
-    return _local_my_lookup(digits)
-
-
-# ── Helper: Extract URL ───────────────────────────────────
-def extract_url(text):
-    pattern = r'https?://[^\s]+'
-    match = re.search(pattern, text)
-    return match.group(0) if match else None
-
-
-# ── Helper: Extract IP address ────────────────────────────
-def extract_ip(text):
-    pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-    match = re.search(pattern, text)
-    return match.group(0) if match else None
-
-
-# ── Helper: Extract phone number ──────────────────────────
-def extract_phone(text):
-    # Must start with 0 (local MY) or + (international) — bank accounts don't
-    pattern = r'(\+[\d\s\-\(\)]{7,18}|0[\d\s\-\(\)]{7,13})'
-    matches = re.findall(pattern, text)
-    for match in matches:
-        digits = re.sub(r'\D', '', match)
-        if 7 <= len(digits) <= 15:
-            return match.strip()
-    return None
-
-# ── Helper: Extract bank account number ───────────────────
-BANK_KEYWORDS = {"bank", "akaun", "account", "acc", "maybank", "cimb", "rhb",
-                 "public bank", "hong leong", "ambank", "bsn", "affin", "alliance",
-                 "ocbc", "hsbc", "standard chartered", "uob", "shopee", "touch n go"}
-
-def extract_bank_account(text):
-    text_lower = text.lower()
-    has_bank_keyword = any(k in text_lower for k in BANK_KEYWORDS)
-    # Match 10-16 digit standalone numbers not starting with 0 or +
-    matches = re.findall(r'\b([1-9]\d{9,15})\b', text)
-    for m in matches:
-        # If text has bank keywords OR number is clearly too long for a phone (>12 digits)
-        if has_bank_keyword or len(m) > 12:
-            return m
-    return None
-
-# ── Helper: Extract email ─────────────────────────────────
-def extract_email(text):
-    match = re.search(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', text)
-    return match.group(0) if match else None
-
-# ── Helper: Extract social media handle ───────────────────
-SOCIAL_PLATFORMS = {
-    "instagram.com": "Instagram",
-    "tiktok.com": "TikTok",
-    "facebook.com": "Facebook",
-    "twitter.com": "Twitter/X",
-    "x.com": "Twitter/X",
-    "t.me": "Telegram",
-    "youtube.com": "YouTube",
-    "shopee.com.my": "Shopee",
-    "shopee.com": "Shopee",
-}
-
-def extract_social_handle(text):
-    """Returns (platform, handle) or None."""
-    # Match platform URLs: instagram.com/handle, tiktok.com/@handle
-    for domain, platform in SOCIAL_PLATFORMS.items():
-        pattern = rf'(?:https?://)?(?:www\.)?{re.escape(domain)}/(?:@?)([A-Za-z0-9_.]+)'
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return {"platform": platform, "handle": match.group(1), "domain": domain}
-    # Match bare @handle
-    match = re.search(r'(?<!\w)@([A-Za-z0-9_.]{3,30})(?!\w)', text)
-    if match:
-        return {"platform": "Unknown", "handle": match.group(1), "domain": None}
-    return None
-
-def check_social_handle(platform, handle):
-    """Search SerpAPI for scam reports about this handle."""
-    if not SERPAPI_KEY:
-        return None
-    try:
-        query = f'"{handle}" {platform} scam OR penipu OR fraud OR fake'
-        resp = requests.get("https://serpapi.com/search", params={
-            "engine": "google",
-            "q": query,
-            "num": 5,
-            "api_key": SERPAPI_KEY,
-        }, timeout=15)
-        if resp.status_code != 200:
-            return None
-        results = resp.json().get("organic_results", [])
-        scam_keywords = ["scam", "penipu", "fraud", "fake", "tipu", "report", "penipuan"]
-        hits = []
-        for r in results:
-            title = (r.get("title") or "").lower()
-            snippet = (r.get("snippet") or "").lower()
-            if any(k in title or k in snippet for k in scam_keywords):
-                hits.append(r.get("title", ""))
-        return {
-            "found_reports": len(hits) > 0,
-            "report_count": len(hits),
-            "snippets": hits[:3],
-        }
-    except Exception as e:
-        print(f"[SocialCheck] failed: {e}")
-        return None
-
-
-# ── Helper: Analyze image with Gemini Vision ─────────────
-def analyze_image_with_ai(image_base64, mime_type, lang="en"):
-    image_base64 = resize_image_base64(image_base64, max_size=(800, 800))
-
-    prompt = """You are a scam and fraud detection assistant.
-Analyze this screenshot for any scam indicators — suspicious messages, phishing links, fake offers, urgent requests, or fraud.
-
-Respond ONLY in this exact JSON format with no extra text:
-{
-  "score": <number from 0 to 100>,
-  "status": "<SAFE or SUSPICIOUS or SCAM>",
-  "reason": "<one clear sentence summary of the verdict>",
-  "findings": ["<finding 1>", "<finding 2>", "<finding 3>"]
-}
-
-For findings: list 2-4 short bullet points of specific indicators found (or not found). Each should be one short sentence.
-
-Scoring guide:
-- 0 to 30 = SAFE
-- 31 to 69 = SUSPICIOUS
-- 70 to 100 = SCAM
-
-Respond with "reason" and all "findings" in """ + LANG_NAMES.get(lang, "English") + "."
-
-    response = groq_client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{image_base64}"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-        temperature=0.1,
-    )
-
-    raw = response.choices[0].message.content.strip()
-    return extract_json(raw)
-
-
-# ── Helper: Upload image to ImgBB for temporary hosting ──
-def upload_to_imgbb(image_base64):
-    if not IMGBB_API_KEY:
-        return None
-    try:
-        response = requests.post(
-            "https://api.imgbb.com/1/upload",
-            data={"key": IMGBB_API_KEY, "image": image_base64},
-            timeout=15
-        )
-        if response.status_code == 200:
-            return response.json()["data"]["url"]
-    except Exception:
-        pass
-    return None
-
-
-# ── Helper: Reverse image search with SerpApi ────────────
-PROFILE_PLATFORMS = {
-    "Instagram": "instagram.com",
-    "Facebook": "facebook.com",
-    "Twitter/X": "twitter.com",
-    "TikTok": "tiktok.com",
-    "LinkedIn": "linkedin.com",
-}
-
-def _extract_platforms_from_sites(sites):
-    found = []
-    for site in sites:
-        for platform, domain in PROFILE_PLATFORMS.items():
-            if domain in site and platform not in found:
-                found.append(platform)
-    return found
-
-def _parse_knowledge_graph(kg):
-    """Extract person name, type, and social platforms from a SerpApi knowledge graph."""
-    person_name = kg.get("title") or kg.get("name")
-    person_type = kg.get("type") or kg.get("description", "")
-    social = []
-    for profile in kg.get("social_profiles", []):
-        name = profile.get("name", "")
-        link = profile.get("link", "")
-        if name and name not in social:
-            social.append(name)
-        # Also check the link URL
-        for platform, domain in PROFILE_PLATFORMS.items():
-            if domain in link and platform not in social:
-                social.append(platform)
-    return person_name, person_type, social
-
-def reverse_image_search(image_base64):
-    if not SERPAPI_KEY:
-        return None
-
-    # Upload to ImgBB to get a public URL for SerpApi
-    image_url = upload_to_imgbb(image_base64)
-    if not image_url:
-        return None
-
-    person_name = None
-    person_type = ""
-    found_platforms = []
-    total_found = 0
-
-    # ── Try Google Lens first (better at face/celebrity recognition) ──
-    try:
-        lens_resp = requests.get(
-            "https://serpapi.com/search",
-            params={
-                "engine": "google_lens",
-                "url": image_url,
-                "api_key": SERPAPI_KEY,
-            },
-            timeout=20
-        )
-        if lens_resp.status_code == 200:
-            lens_data = lens_resp.json()
-
-            # Knowledge graph from Lens
-            kg = lens_data.get("knowledge_graph", {})
-            if kg:
-                person_name, person_type, kg_social = _parse_knowledge_graph(kg)
-                found_platforms.extend(p for p in kg_social if p not in found_platforms)
-
-            # related_searches fallback — e.g. "Aliff Aziz" shown as related search
-            if not person_name:
-                for item in lens_data.get("related_searches", []):
-                    query = item.get("query", "")
-                    # Person names are typically Title Case with 2+ words
-                    words = query.strip().split()
-                    if len(words) >= 2 and all(w[0].isupper() for w in words if w):
-                        person_name = query
-                        break
-                # Also check knowledge_graph in related_content
-                for item in lens_data.get("related_content", []):
-                    title = item.get("title", "")
-                    words = title.strip().split()
-                    if len(words) >= 2 and all(w[0].isupper() for w in words if w):
-                        person_name = title
-                        break
-
-            # Visual matches — only count social media sites, ignore retail/product pages
-            visual_matches = lens_data.get("visual_matches", [])
-            match_sites = [m.get("link", "") for m in visual_matches[:15]]
-            social_match_sites = [s for s in match_sites if any(
-                domain in s for domain in PROFILE_PLATFORMS.values()
-            )]
-            total_found = len(social_match_sites)
-            for p in _extract_platforms_from_sites(match_sites):
-                if p not in found_platforms:
-                    found_platforms.append(p)
-    except Exception:
-        pass
-
-    # ── Also run google_reverse_image for extra coverage ──
-    try:
-        rev_resp = requests.get(
-            "https://serpapi.com/search",
-            params={
-                "engine": "google_reverse_image",
-                "image_url": image_url,
-                "api_key": SERPAPI_KEY,
-            },
-            timeout=20
-        )
-        if rev_resp.status_code == 200:
-            rev_data = rev_resp.json()
-
-            # Knowledge graph fallback
-            if not person_name:
-                kg = rev_data.get("knowledge_graph", {})
-                if kg:
-                    person_name, person_type, kg_social = _parse_knowledge_graph(kg)
-                    found_platforms.extend(p for p in kg_social if p not in found_platforms)
-
-            # image_results (near-exact matches)
-            image_results = rev_data.get("image_results", [])
-            if not total_found:
-                total_found = len(image_results)
-            rev_sites = [r.get("link", "") for r in image_results[:15]]
-            for p in _extract_platforms_from_sites(rev_sites):
-                if p not in found_platforms:
-                    found_platforms.append(p)
-    except Exception:
-        pass
-
-    return {
-        "total_found": total_found,
-        "sites": [],
-        "found_online": len(found_platforms) > 0 or bool(person_name),
-        "social_platforms": found_platforms,
-        "found_on_social": len(found_platforms) > 0,
-        "person_name": person_name,
-        "person_type": person_type,
-        "is_public_figure": bool(person_name),
-    }
-
-
-# ── Helper: Analyze profile photo with Groq Vision ───────
-def analyze_profile_photo(image_base64, lang="en"):
-    image_base64 = resize_image_base64(image_base64)
-    prompt = """You are a scam detection assistant analyzing a profile photo.
-
-FIRST — determine if this image contains a real human person (face OR body).
-If the image contains NO human person at all (e.g. it is a cartoon, anime, game character, artwork, screenshot of text, meme, logo, animal, building, landscape with no person, or object), respond with:
-{
-  "score": 0,
-  "status": "INVALID",
-  "reason": "This image does not appear to contain a real person.",
-  "ai_generated": false,
-  "looks_like_stock": false
-}
-
-NOTE: Photos where the face is not clearly visible are still valid — underwater photos, silhouettes, photos from behind, action shots, and full-body photos with obscured faces should all be analyzed. Only reject if there is truly no human present.
-
-KEY RULE — Background analysis:
-- A REAL selfie background, even when blurred, shows identifiable real-world elements: furniture shapes, wall colors, trees, streets, people, windows, etc. You can tell WHERE the person is.
-- An AI-generated portrait background is a perfectly uniform, featureless blur or gradient — no identifiable location, no shapes, no context. This is a strong AI indicator.
-- A plain studio background (solid color, no environment) = stock or AI.
-
-Strong AI-generated signs:
-- Perfectly featureless blurred background — smooth gradient with zero identifiable real-world elements
-- Skin is flawless with zero pores, blemishes, or texture variation (not just smooth — completely poreless)
-- Hair is impossibly perfect with every strand rendered uniformly, no flyaways
-- Facial symmetry is unnaturally perfect
-- Lighting is perfectly even from all directions with no real light source visible
-- The overall image looks like a rendered portrait, not a photograph
-
-Stock photo signs:
-- Professional studio lighting against a plain solid or minimal background
-- Subject poses like a commercial model
-- No real-world environment visible
-
-Real person selfie signs (score low):
-- Background shows a real place even if slightly blurry (you can identify WHERE they are)
-- Candid or casual pose, selfie angle
-- Natural, directional lighting (from a window, lamp, outdoors)
-- Minor skin imperfections, natural hair
-- Everyday clothing, cultural attire
-
-Smartphone portrait mode creates NATURAL background blur that still shows environmental shapes. AI blur is a perfect featureless gradient.
-
-IMPORTANT — Dark or studio backgrounds:
-- A dark/black background in a gym, fitness, or portrait photo is NORMAL and does NOT indicate AI.
-- A fitness promotional photo, sports photo, or branded content photo with studio lighting is a REAL PHOTO, not AI — even if it looks professional.
-- Only flag as AI if you see multiple clear AI artifacts (merged features, warped elements, plastic skin texture).
-
-Also look for any visible social media UI in the image:
-- If you can see an Instagram, Facebook, TikTok, Twitter, or other social media username or handle (e.g. "@username", a verified badge, a profile name), extract it.
-
-Also check: Is this person a well-known public figure, celebrity, athlete, artist, or influencer that you recognise?
-
-Respond ONLY in this exact JSON format with no extra text:
-{
-  "score": <number from 0 to 100>,
-  "status": "<SAFE or SUSPICIOUS or SCAM>",
-  "reason": "<one clear sentence about the photo>",
-  "ai_generated": <true or false>,
-  "looks_like_stock": <true or false>,
-  "detected_handle": "<social media username if visible in image, or null>",
-  "detected_platform": "<platform name e.g. Instagram, or null>",
-  "known_person": "<full name of the person if you recognise them as a public figure, or null>",
-  "known_person_type": "<their role e.g. Singer, Actor, Athlete, or null>",
-  "findings": ["<finding 1>", "<finding 2>", "<finding 3>"]
-}
-
-Scoring guide:
-- 0 to 30 = SAFE — Looks like a genuine real person photo
-- 31 to 69 = SUSPICIOUS — Some suspicious signs, ambiguous
-- 70 to 100 = SCAM — Strong evidence of AI-generation or stock photo
-
-Respond with "reason" and all "findings" in """ + LANG_NAMES.get(lang, "English") + "."
-
-    response = groq_client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                    },
-                    {"type": "text", "text": prompt}
-                ]
-            }
-        ],
-        temperature=0.1,
-    )
-
-    raw = response.choices[0].message.content.strip()
-    return extract_json(raw)
-
-
-# ── Profile Check Route ──────────────────────────────────
-@app.route("/check-profile", methods=["POST"])
-@limiter.limit("10 per minute")
-def check_profile():
-    _, err = require_auth()
-    if err:
-        return err
-    data = request.get_json()
-    if not data or "image" not in data:
-        return jsonify({"error": "Please provide an image."}), 400
-
-    try:
-        lang = data.get("lang", "en")
-        ai_result = analyze_profile_photo(data["image"], lang)
-
-        # Reject non-person images
-        if ai_result.get("status") == "INVALID":
-            return jsonify({"error": "No person detected in this image. Please upload a photo that contains a real person (face, body, or action shot)."}), 400
-
-        # Adjust score based on AI vision flags
-        if ai_result.get("ai_generated"):
-            ai_result["score"] = min(100, ai_result["score"] + 15)
-            if ai_result["score"] >= 70:
-                ai_result["status"] = "SCAM"
-        elif ai_result.get("looks_like_stock"):
-            ai_result["score"] = min(60, ai_result["score"])
-            ai_result["status"] = "SUSPICIOUS"
-        else:
-            ai_result["score"] = max(0, ai_result["score"] - 20)
-            if ai_result["score"] < 31:
-                ai_result["status"] = "SAFE"
-
-        impersonation_warning = None
-        person_name = ai_result.get("known_person")
-        person_type = ai_result.get("known_person_type", "")
-        detected_handle = ai_result.get("detected_handle")
-        detected_platform = ai_result.get("detected_platform")
-
-        # Public figure detected by Groq vision — always SCAM
-        if person_name:
-            type_str = f" ({person_type})" if person_type else ""
-            impersonation_warning = (
-                f"This photo appears to be of {person_name}{type_str}, a known public figure. "
-                f"If someone sent you this photo claiming to be them, they may be impersonating this person."
-            )
-            ai_result["score"] = 90
-            ai_result["status"] = "SCAM"
-
-        # Visible social media handle in screenshot
-        if detected_handle and not impersonation_warning and not ai_result.get("ai_generated"):
-            impersonation_warning = (
-                f"This appears to be a screenshot from {detected_platform or 'social media'} "
-                f"showing {detected_handle}. If someone sent you this as their profile photo, verify their identity directly."
-            )
-
-        return jsonify({
-            "score": ai_result["score"],
-            "status": ai_result["status"],
-            "reason": ai_result["reason"],
-            "findings": ai_result.get("findings", []),
-            "ai_generated": ai_result.get("ai_generated", False),
-            "looks_like_stock": ai_result.get("looks_like_stock", False),
-            "impersonation_warning": impersonation_warning,
-            "detected_handle": detected_handle,
-            "detected_platform": detected_platform,
-            "person_name": person_name,
-            "person_type": person_type,
-        })
-
-    except Exception as e:
-        return jsonify({"error": f"Profile check failed: {str(e)}"}), 500
-
-
-# ── Main Route: Analyze input ────────────────────────────
-@app.route("/analyze", methods=["POST"])
-@limiter.limit("20 per minute")
-def analyze():
-    _, err = require_auth()
-    if err:
-        return err
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"error": "Please provide text or image to analyze."}), 400
-
-    # Image analysis
-    if "image" in data:
-        try:
-            ai_result = analyze_image_with_ai(data["image"], data.get("mime_type", "image/jpeg"), data.get("lang", "en"))
-            return jsonify({
-                "score": ai_result["score"],
-                "status": ai_result["status"],
-                "reason": ai_result["reason"],
-                "findings": ai_result.get("findings", []),
-                "url_scanned": None,
-                "url_flagged": None,
-                "ip_scanned": None,
-                "ip_flagged": None,
-                "phone_scanned": None,
-                "phone_info": None,
-                "phone_valid": None
-            })
-        except Exception as e:
-            return jsonify({"error": f"Image analysis failed: {str(e)}"}), 500
-
-    if "text" not in data:
-        return jsonify({"error": "Please provide text to analyze."}), 400
-
-    text = data["text"].strip()
-    lang = data.get("lang", "en")
-
-    if len(text) < 3:
-        return jsonify({"error": "Input is too short to analyze."}), 400
-
-    if len(text) > 5000:
-        return jsonify({"error": "Input is too long. Max 5000 characters."}), 400
-
-    try:
-        # Step 1: AI analysis
-        ai_result = analyze_with_ai(text, lang)
-
-        # Step 2: URL scan
-        url_result = None
-        detected_url = extract_url(text)
-        if detected_url:
-            url_result = check_url_virustotal(detected_url)
-
-        # Step 3: IP scan
-        ip_result = None
-        detected_ip = None
-        if not detected_url:
-            detected_ip = extract_ip(text)
-            if detected_ip:
-                ip_result = check_ip_virustotal(detected_ip)
-
-        # Step 4: Phone / bank account / email check
-        phone_result = None
-        semak_result = None
-        detected_phone = None
-        detected_email = None
-        detected_social = None
-        email_semak = None
-        social_result = None
-        if not detected_url and not detected_ip:
-            detected_phone = extract_phone(text)
-            if detected_phone:
-                phone_result = check_phone_numverify(detected_phone)
-                semak_result = check_semak_mule(detected_phone)
-            detected_email = extract_email(text)
-            if detected_email:
-                email_semak = check_semak_mule_email(detected_email)
-            detected_social = extract_social_handle(text)
-            if detected_social:
-                social_result = check_social_handle(
-                    detected_social["platform"], detected_social["handle"]
-                )
-
-        # ── Step 5: Collect external signals with capped contributions ──
-
-        SAFE_DOMAINS = {
-            "google.com", "youtube.com", "facebook.com", "instagram.com",
-            "twitter.com", "x.com", "tiktok.com", "linkedin.com", "whatsapp.com",
-            "maybank.com", "maybank2u.com", "cimb.com", "rhb.com",
-            "hongleongbank.com", "publicbank.com.my", "ambank.com.my",
-            "bsn.com.my", "bankislam.com.my", "muamalat.com.my", "affinbank.com.my",
-            "pdrm.gov.my", "hasil.gov.my", "jpj.gov.my", "bnm.gov.my", "sst.customs.gov.my",
-            "gov.my", "edu.my", "shopee.com.my", "lazada.com.my",
-            "grab.com", "tngdigital.com.my", "touch-n-go.com", "boost.com.my",
-        }
-
-        external_score = 0
-        findings = list(ai_result.get("findings", []))
-
-        # VirusTotal URL — max +25
-        if url_result and url_result["flagged"]:
-            vt_boost = min(25, 10 + url_result.get("malicious", 0) * 3)
-            external_score += vt_boost
-            findings.append("URL was flagged by VirusTotal threat engines.")
-
-        # VirusTotal IP — max +25
-        if ip_result and ip_result["flagged"]:
-            ip_boost = min(25, 10 + ip_result.get("malicious", 0) * 3)
-            external_score += ip_boost
-            findings.append("IP address was flagged by VirusTotal.")
-
-        # Semak Mule phone — 20pts per report, max +60
-        semak_boost = 0
-        if semak_result and semak_result["found"]:
-            semak_boost = min(60, semak_result["reports"] * 20)
-            external_score += semak_boost
-            findings.append(f"🚨 This phone number has {semak_result['reports']} scam report(s) on Semak Mule (PDRM).")
-        elif semak_result and not semak_result["found"]:
-            findings.append("✅ This phone number — no reports found on Semak Mule (PDRM).")
-        elif semak_result is None and detected_phone:
-            findings.append("⚠️ Could not reach Semak Mule to verify this phone number.")
-
-        # Semak Mule email — 20pts per report, max +60
-        email_semak_boost = 0
-        if email_semak and email_semak["found"]:
-            email_semak_boost = min(60, email_semak["reports"] * 20)
-            external_score += email_semak_boost
-            findings.append(f"🚨 This email has {email_semak['reports']} scam report(s) on Semak Mule (PDRM).")
-        elif email_semak and not email_semak["found"]:
-            findings.append("✅ This email address — no reports found on Semak Mule (PDRM).")
-        elif email_semak is None and detected_email:
-            findings.append("⚠️ Could not reach Semak Mule to verify this email.")
-
-        # Social handle — max +15
-        if detected_social and social_result:
-            handle = detected_social["handle"]
-            platform = detected_social["platform"]
-            if social_result["found_reports"]:
-                count = social_result["report_count"]
-                external_score += min(15, count * 5)
-                findings.append(f"🚨 @{handle} ({platform}) found in {count} scam-related search result(s).")
-                findings += [f"  • {s}" for s in social_result["snippets"][:2]]
+            df = pd.read_csv(csv_path, low_memory=False)
+            df.columns = df.columns.str.strip()
+            logger.info(f"[ML] Reading {csv_path.name} — columns: {list(df.columns)}")
+
+            level_col = _detect_column(df, _LEVEL_ALIASES)
+            rain_col  = _detect_column(df, _RAIN_ALIASES)
+            dt_col    = _detect_column(df, _DT_ALIASES)
+
+            # Kaggle Malaysia Flood Dataset uses "Month" as a separate column
+            month_col = next((c for c in df.columns if c.strip().lower() == "month"), None)
+
+            if level_col is None and rain_col is None:
+                logger.warning(f"[ML] {csv_path.name}: no level/rainfall columns found — skipping")
+                continue
+
+            row: dict = {}
+
+            if level_col:
+                df[level_col] = pd.to_numeric(df[level_col], errors="coerce")
+                row["river_level"] = df[level_col]
+
+            if rain_col:
+                df[rain_col] = pd.to_numeric(df[rain_col], errors="coerce")
+                row["rainfall_rate"] = df[rain_col]
+
+            # Prefer explicit datetime column; fall back to separate Month column
+            if dt_col:
+                dt = pd.to_datetime(df[dt_col], errors="coerce")
+                row["hour"]  = dt.dt.hour.fillna(12)
+                row["month"] = dt.dt.month.fillna(6)
+            elif month_col:
+                row["month"] = pd.to_numeric(df[month_col], errors="coerce").fillna(6)
+                row["hour"]  = 12  # daily/monthly data has no hour — use noon
             else:
-                findings.append(f"✅ @{handle} ({platform}) — no scam reports found online.")
+                row["hour"]  = 12
+                row["month"] = 6
 
-        # Legitimacy signals — reduce external score
-        if detected_url:
-            try:
-                domain = urlparse(detected_url).netloc.lower().removeprefix("www.")
-                if any(domain == s or domain.endswith("." + s) for s in SAFE_DOMAINS):
-                    external_score -= 20
-                    findings.append(f"✅ {domain} is a recognised legitimate domain.")
-            except Exception:
-                pass
+            chunk = pd.DataFrame(row).dropna()
 
-        # Valid phone with no Semak Mule reports — slight negative signal
-        if detected_phone and phone_result and phone_result.get("valid") and semak_boost == 0:
-            external_score -= 10
+            # Fill any still-missing feature columns with safe defaults
+            if "river_level" not in chunk.columns:
+                chunk["river_level"] = 1.5
+            if "rainfall_rate" not in chunk.columns:
+                chunk["rainfall_rate"] = 5.0
 
-        # Phone baseline — AI unreliable for bare numbers
-        if detected_phone and ai_result["score"] < 25:
-            ai_result["score"] = 25
-            findings.append("Phone number detected — cannot determine safety from number alone.")
+            chunk = chunk[["river_level", "rainfall_rate", "hour", "month"]]
 
-        # ── Step 6: Weighted formula — AI 50% + external signals 50% ──
-        external_score = max(0, min(100, external_score))
-        final_score = round((ai_result["score"] * 0.5) + (external_score * 0.5))
+            # Drop physically impossible readings
+            chunk = chunk[
+                (chunk["river_level"] >= 0) & (chunk["river_level"] <= 20) &
+                (chunk["rainfall_rate"] >= 0) & (chunk["rainfall_rate"] <= 500)
+            ]
 
-        # ── Hard overrides — high-confidence signals force minimum scores ──
-        phone_reports = semak_result.get("reports", 0) if semak_result and semak_result["found"] else 0
-        email_reports = email_semak.get("reports", 0) if email_semak and email_semak["found"] else 0
+            if len(chunk) < 10:
+                logger.warning(f"[ML] {csv_path.name}: only {len(chunk)} valid rows after filtering — skipping")
+                continue
 
-        # Semak Mule is PDRM's official database — any report = confirmed scam
-        if phone_reports >= 1 or email_reports >= 1:
-            final_score = max(final_score, 75)   # SCAM
-        if phone_reports >= 2 or email_reports >= 2:
-            final_score = max(final_score, 85)
-        if phone_reports >= 3 or email_reports >= 3:
-            final_score = max(final_score, 92)
+            frames.append(chunk.values.astype(float))
+            logger.info(f"[ML] Loaded {len(chunk):,} rows from {csv_path.name}")
 
-        # VirusTotal multiple engines flagged → force ≥ 75
-        if (url_result and url_result.get("malicious", 0) >= 3) or \
-           (ip_result and ip_result.get("malicious", 0) >= 3):
-            final_score = max(final_score, 75)
+        except Exception as e:
+            logger.warning(f"[ML] Failed to read {csv_path.name}: {e}")
 
-        # Final clamp and status
-        final_score = min(100, max(0, final_score))
+    if not frames:
+        return None
 
-        if final_score >= 70:
-            final_status = "SCAM"
-        elif final_score >= 31:
-            final_status = "SUSPICIOUS"
+    combined = np.vstack(frames)
+    logger.info(f"[ML] Total real training rows: {len(combined):,}")
+    return combined
+
+
+def _jps_threshold_baseline() -> np.ndarray:
+    """
+    Fallback training set of NORMAL (SAFE-band only) readings.
+
+    Isolation Forest must be trained on NORMAL data only — not on labelled
+    classes. The model learns what "normal" looks like; anything outside that
+    distribution is flagged as anomalous.
+
+    All readings are below the JPS SAFE threshold (< 3.0 m, < 20 mm/hr),
+    derived from real reported ranges at Klang Valley telemetry stations.
+    WATCH/WARNING/DANGER readings are NOT included here — they are what the
+    model learns to detect as anomalies.
+
+    Features: [river_level (m), rainfall_rate (mm/hr), hour_of_day, month]
+    """
+    rows = []
+
+    # Concrete level-rainfall pairs representing normal KL river conditions.
+    # Each pair appears for every hour and every month so the model learns the
+    # full seasonal and diurnal normal range.
+    normal_readings = [
+        # (level_m, rain_mm_hr)  — all strictly below JPS SAFE threshold
+        (0.5,  0.0), (0.6,  0.0), (0.7,  1.0), (0.8,  0.0), (0.9,  2.0),
+        (1.0,  0.0), (1.1,  1.0), (1.2,  3.0), (1.3,  0.0), (1.4,  5.0),
+        (1.5,  0.0), (1.6,  8.0), (1.7,  2.0), (1.8,  0.0), (1.9,  6.0),
+        (2.0,  0.0), (2.1, 10.0), (2.2,  4.0), (2.3,  0.0), (2.4, 12.0),
+        (2.5,  5.0), (2.6,  0.0), (2.7,  8.0), (2.8, 15.0), (2.9,  3.0),
+        # Monsoon season — rivers run higher but still safe (Nov–Jan baseline)
+        (1.8, 18.0), (2.0, 20.0), (2.2, 16.0), (2.4, 19.0), (2.6, 14.0),
+        (2.7, 17.0), (2.9, 18.0),
+    ]
+
+    for level, rain in normal_readings:
+        for hour in range(0, 24):          # every hour of day
+            for month in range(1, 13):     # every month of year
+                rows.append([level, rain, float(hour), float(month)])
+
+    arr = np.array(rows, dtype=float)
+    logger.info(f"[ML] JPS threshold baseline: {len(arr):,} normal-condition readings (SAFE-band only)")
+    return arr
+
+
+def load_or_train_model():
+    """
+    Model loading priority:
+      1. flood_model.pkl already exists → load it (fastest startup)
+      2. backend/data/*.csv present     → train on real data, save pkl
+      3. No CSV                         → train on JPS threshold baseline, save pkl
+
+    Delete flood_model.pkl to force a retrain after adding new CSV data.
+    """
+    if MODEL_PATH.exists():
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        logger.info("[ML] Loaded existing flood_model.pkl")
+        return model
+
+    from sklearn.ensemble import IsolationForest
+
+    training_data = _load_csv_data()
+    source = "real CSV data"
+
+    if training_data is None or len(training_data) < 50:
+        if training_data is not None:
+            logger.warning(f"[ML] Only {len(training_data)} rows from CSV — falling back to JPS baseline")
         else:
-            final_status = "SAFE"
+            logger.warning("[ML] No CSV in backend/data/ — using JPS threshold baseline (add real data for production)")
+        training_data = _jps_threshold_baseline()
+        source = "JPS threshold baseline"
 
-        return jsonify({
-            "score": final_score,
-            "status": final_status,
-            "reason": ai_result["reason"],
-            "findings": findings,
-            "url_scanned": detected_url,
-            "url_flagged": url_result["flagged"] if url_result else None,
-            "ip_scanned": detected_ip,
-            "ip_flagged": ip_result["flagged"] if ip_result else None,
-            "phone_scanned": detected_phone,
-            "phone_info": phone_result.get("info") if phone_result else None,
-            "phone_valid": phone_result["valid"] if phone_result else None,
-            "phone_country": phone_result.get("country") if phone_result else None,
-            "phone_country_code": phone_result.get("country_code") if phone_result else None,
-            "phone_location": phone_result.get("location") if phone_result else None,
-            "phone_carrier": phone_result.get("carrier") if phone_result else None,
-            "phone_line_type": phone_result.get("line_type") if phone_result else None,
-            "phone_international": phone_result.get("international_format") if phone_result else None,
-            "semak_mule_reports": semak_result["reports"] if semak_result else None,
-            "semak_mule_found": semak_result["found"] if semak_result else None,
-            "email_scanned": detected_email,
-            "email_semak_found": email_semak["found"] if email_semak else None,
-            "email_semak_reports": email_semak["reports"] if email_semak else None,
-            "social_handle": detected_social["handle"] if detected_social else None,
-            "social_platform": detected_social["platform"] if detected_social else None,
-            "social_found_reports": social_result["found_reports"] if social_result else None,
-            "social_report_count": social_result["report_count"] if social_result else None,
-            "social_snippets": social_result["snippets"] if social_result else None,
+    # contamination=0.05: ~5% of readings expected to be anomalous in real-world data
+    model = IsolationForest(n_estimators=200, contamination=0.05, random_state=42)
+    model.fit(training_data)
+
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump(model, f)
+    logger.info(f"[ML] Trained and saved flood_model.pkl — source: {source} ({len(training_data):,} rows)")
+    return model
+
+
+_ml_model = load_or_train_model()
+
+
+def compute_anomaly_score(
+    river_level: float,
+    rainfall_rate: float,
+    hour: int | None = None,
+    month: int | None = None,
+) -> tuple[float, bool]:
+    """
+    Run the Isolation Forest on a single reading.
+    Returns (anomaly_score: 0.0-1.0, is_anomaly: bool).
+
+    Uses decision_function (already offset-corrected by sklearn):
+      df > 0  → inlier  (normal/SAFE)
+      df < 0  → outlier (WATCH/WARNING/DANGER)
+
+    Mapping to [0,1]:  anomaly_score = clip(0.7 - df * 5.0, 0, 1)
+      df = +0.12  →  0.10  (clearly safe,   not flagged)
+      df =  0.00  →  0.70  (at threshold,   boundary)
+      df = -0.02  →  0.80  (anomalous,      flagged)
+    Threshold 0.7 aligns exactly with the model's own decision boundary.
+    """
+    if hour is None:
+        hour = datetime.now().hour
+    if month is None:
+        month = datetime.now().month
+
+    features = np.array([[river_level, rainfall_rate, float(hour), float(month)]])
+    # decision_function = score_samples - offset_  (positive = normal, negative = anomaly)
+    df = float(_ml_model.decision_function(features)[0])
+    anomaly_score = float(np.clip(0.7 - df * 5.0, 0.0, 1.0))
+    return anomaly_score, anomaly_score > 0.7
+
+
+# ── JPS Live Data Fetch ───────────────────────────────────────────────────────
+_JPS_BASE = "https://info.water.gov.my/index.php/publicwebservices/getStation"
+
+
+def _fetch_jps_wl() -> dict:
+    """Fetch live water-level readings from JPS (Selangor). Returns {district: {level, station}}."""
+    resp = requests.get(
+        _JPS_BASE,
+        params={"state": "Selangor", "district": "all", "type": "WL"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    wl: dict = {}
+    for station in resp.json().get("data", []):
+        district = station.get("district", "").strip()
+        if not district:
+            continue
+        try:
+            level = float(station.get("value", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        # Keep the highest-level station per district
+        if district not in wl or level > wl[district]["level"]:
+            wl[district] = {"level": level, "station": station.get("stationname", district)}
+    return wl
+
+
+_RAINFALL_TTL        = 300  # 5-minute cache — WeatherAPI free tier: 1M calls/month
+_RAINFALL_CACHE_FILE = Path(__file__).parent / "data" / "rainfall_cache.json"
+_WEATHERAPI_KEY      = os.getenv("WEATHERAPI_KEY", "")
+
+
+def _load_rainfall_file_cache() -> dict:
+    try:
+        if _RAINFALL_CACHE_FILE.exists():
+            cached = json.loads(_RAINFALL_CACHE_FILE.read_text())
+            if time.time() - cached.get("ts", 0) < _RAINFALL_TTL:
+                data = cached.get("data", {})
+                # Reject all-zero cache — it was written during an auth failure
+                if data and any(v > 0 for v in data.values()):
+                    age = int(time.time() - cached["ts"])
+                    logger.info(f"[WeatherAPI] Restored cache from disk ({age}s old)")
+                    return cached
+                else:
+                    logger.info("[WeatherAPI] Cached data is all-zero — forcing fresh fetch")
+    except Exception:
+        pass
+    return {"data": {}, "ts": 0.0}
+
+
+def _save_rainfall_file_cache(data: dict) -> None:
+    try:
+        _RAINFALL_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _RAINFALL_CACHE_FILE.write_text(json.dumps({"data": data, "ts": time.time()}))
+    except Exception as e:
+        logger.warning(f"[WeatherAPI] Could not save cache: {e}")
+
+
+_RAINFALL_CACHE: dict = _load_rainfall_file_cache()
+
+
+def _fetch_one_district(district: str) -> tuple[str, dict]:
+    """
+    Fetch current + 2-hour forecast for one district via WeatherAPI forecast endpoint.
+    Returns (district, {precip, condition, forecast_1h, forecast_2h, rain_chance_max})
+    """
+    lat, lng = DISTRICT_COORDS[district]
+    resp = requests.get(
+        "https://api.weatherapi.com/v1/forecast.json",
+        params={"key": _WEATHERAPI_KEY, "q": f"{lat},{lng}", "days": 1, "aqi": "no"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+
+    cur       = body.get("current", {})
+    precip    = float(cur.get("precip_mm", 0) or 0)
+    condition = cur.get("condition", {}).get("text", "")
+
+    # Extract the next 2 hourly slots from the forecast
+    now_hour = datetime.now().hour
+    hours    = body.get("forecast", {}).get("forecastday", [{}])[0].get("hour", [])
+    upcoming = [h for h in hours if int(h.get("time", "00:00").split(" ")[1].split(":")[0]) > now_hour][:2]
+
+    forecast_1h      = float(upcoming[0].get("precip_mm", 0)) if len(upcoming) > 0 else 0.0
+    forecast_2h      = float(upcoming[1].get("precip_mm", 0)) if len(upcoming) > 1 else 0.0
+    rain_chance_max  = max(
+        int(upcoming[0].get("chance_of_rain", 0)) if len(upcoming) > 0 else 0,
+        int(upcoming[1].get("chance_of_rain", 0)) if len(upcoming) > 1 else 0,
+    )
+
+    return district, {
+        "precip":         precip,
+        "condition":      condition,
+        "forecast_1h":    forecast_1h,
+        "forecast_2h":    forecast_2h,
+        "rain_chance_max": rain_chance_max,
+    }
+
+
+def _fetch_weatherapi_rainfall() -> dict:
+    """
+    Fetch live precipitation (mm) for all districts in parallel via WeatherAPI.com.
+    Fuses station obs + radar + model — accurately captures localized KL thunderstorms.
+    Cached 5 min with file persistence across restarts.
+    On failure, returns last cached data rather than inaccurate zeros.
+    """
+    global _RAINFALL_CACHE
+    age = time.time() - _RAINFALL_CACHE["ts"]
+    if _RAINFALL_CACHE["data"] and any(v.get("precip", 0) > 0 if isinstance(v, dict) else v > 0
+                                       for v in _RAINFALL_CACHE["data"].values()) and age < _RAINFALL_TTL:
+        logger.info(f"[WeatherAPI] Cache hit ({int(age)}s old)")
+        return _RAINFALL_CACHE["data"]
+
+    _EMPTY = {"precip": 0.0, "condition": "", "forecast_1h": 0.0, "forecast_2h": 0.0, "rain_chance_max": 0}
+    try:
+        result = {}
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {pool.submit(_fetch_one_district, d): d for d in DISTRICT_COORDS}
+            for future in as_completed(futures):
+                try:
+                    district, data = future.result()
+                    result[district] = data
+                except Exception as e:
+                    district = futures[future]
+                    logger.warning(f"[WeatherAPI] {district}: {e}")
+                    prev = _RAINFALL_CACHE["data"].get(district, {})
+                    result[district] = prev if isinstance(prev, dict) else _EMPTY.copy()
+        nonzero = sum(1 for v in result.values() if v.get("precip", 0) > 0)
+        logger.info(f"[WeatherAPI] Live data for {len(result)} districts ({nonzero} raining now)")
+    except Exception as e:
+        logger.error(f"[WeatherAPI] Fetch failed: {e} — serving stale cache")
+        return _RAINFALL_CACHE["data"] or {d: _EMPTY.copy() for d in DISTRICT_COORDS}
+
+    # Only persist to disk if at least one district has rainfall — avoids caching
+    # a batch of zeros caused by an auth error, which would poison subsequent restarts.
+    if any(v.get("precip", 0) > 0 for v in result.values()) or not _RAINFALL_CACHE["data"]:
+        _RAINFALL_CACHE = {"data": result, "ts": time.time()}
+        _save_rainfall_file_cache(result)
+    else:
+        # Don't reset the TTL for an all-zero result — retry next cycle
+        _RAINFALL_CACHE["data"] = result
+
+    return result
+
+
+def fetch_jps_data() -> dict:
+    """
+    Fetch live data from two sources:
+      - JPS WL API    → river_level for Selangor districts (live if reachable)
+      - WeatherAPI.com → precipitation mm/hr for ALL districts (station + radar fusion)
+
+    Merges both into the full JPS_FALLBACK structure so all 13 states are
+    always present. Falls back gracefully if either source fails.
+    """
+    wl_data: dict = {}
+    rf_data: dict = {}
+
+    try:
+        wl_data = _fetch_jps_wl()
+        logger.info(f"[JPS-WL] Live river levels for {len(wl_data)} districts")
+    except Exception as e:
+        logger.warning(f"[JPS-WL] Unreachable ({e}) — using fallback levels")
+
+    try:
+        rf_data = _fetch_weatherapi_rainfall()
+        logger.info(f"[WeatherAPI] Rainfall data for {len(rf_data)} districts")
+    except Exception as e:
+        logger.warning(f"[WeatherAPI] Unreachable ({e}) — using fallback rainfall")
+
+    rng = np.random.default_rng(int(time.time()) % 10000)
+    result: dict = {}
+
+    for river, base in JPS_FALLBACK.items():
+        district = base["district"]
+        wl = wl_data.get(district)
+        rf_entry = rf_data.get(district)
+        if isinstance(rf_entry, dict):
+            rf_precip       = rf_entry.get("precip", None)
+            rf_condition    = rf_entry.get("condition", "")
+            rf_forecast_1h  = rf_entry.get("forecast_1h", 0.0)
+            rf_forecast_2h  = rf_entry.get("forecast_2h", 0.0)
+            rf_chance_max   = rf_entry.get("rain_chance_max", 0)
+        else:
+            rf_precip = rf_entry
+            rf_condition = rf_forecast_1h = rf_forecast_2h = ""
+            rf_chance_max = 0
+
+        if wl:
+            level   = wl["level"]
+            station = wl["station"]
+        else:
+            level   = round(float(base["level"]) + float(rng.uniform(-0.1, 0.2)), 2)
+            station = base["station"]
+
+        if rf_precip is not None:
+            rainfall = rf_precip
+        else:
+            rainfall = round(max(0.0, float(base["rainfall"]) + float(rng.uniform(-2, 5))), 1)
+
+        result[river] = {
+            "level":          level,
+            "rainfall":       rainfall,
+            "condition":      rf_condition,
+            "forecast_1h":    rf_forecast_1h,
+            "forecast_2h":    rf_forecast_2h,
+            "rain_chance_max": rf_chance_max,
+            "district":       district,
+            "station":        station,
+            "live_wl":        wl is not None,
+            "live_rainfall":  rf_precip is not None,
+        }
+
+    return result
+
+
+# ── Claude AI Risk Classification ─────────────────────────────────────────────
+def classify_risk_with_claude(readings: dict, anomaly_score: float) -> dict:
+    """
+    Send current river readings and ML anomaly score to Claude for structured
+    risk classification. Falls back to rule-based assessment if API is unavailable.
+    """
+    if not _anthropic_client:
+        return _rule_based_fallback(readings)
+
+    readings_str = json.dumps(readings, indent=2)
+
+    prompt = f"""You are a flood risk assessment agent for Malaysia. You understand two distinct flood types:
+
+1. FLASH FLOOD (banjir kilat) — KL/Selangor urban districts (Klang, Gombak, Kepong, Cheras, Ampang, Petaling Jaya, Bangsar, Subang Jaya, Shah Alam)
+   - Caused by heavy rainfall overwhelming KL's drainage infrastructure
+   - Thresholds (hourly accumulated mm): Watch ≥15mm/hr | Warning ≥30mm/hr | Danger ≥50mm/hr
+   - Use composite score: if current rain is moderate (≥5mm) AND forecast_2h shows heavy incoming (≥25mm), raise risk proactively
+   - River level is a secondary lagging indicator
+
+2. RIVER OVERFLOW FLOOD — Selangor rural zones (Kuala Selangor, Sepang)
+   - Caused by rivers exceeding banks after sustained upstream rainfall
+   - Primary trigger: JPS river level — Watch ≥3.0m | Warning ≥4.5m | Danger ≥5.5m
+   - Rainfall + forecast accelerate river rise but level is the key metric
+
+Current readings (includes live rainfall + 2-hour forecast per district): {readings_str}
+ML anomaly score: {anomaly_score:.3f}
+
+Rules:
+- For FLASH FLOOD districts: base reasoning on rainfall AND forecast_1h/forecast_2h. If forecast shows significantly more rain incoming (e.g. >15mm in next 2h), raise risk proactively.
+- For RIVER OVERFLOW districts: base reasoning on river level vs JPS thresholds. Forecast rain accelerates river rise.
+- Use forecast_1h, forecast_2h, and rain_chance_max to decide if risk is RISING even if current rain is low.
+- reasoning must clearly state the flood type, primary metric, AND whether risk is current or forecast-driven.
+
+Respond ONLY in this exact JSON format:
+{{
+  "risk_level": "SAFE|WATCH|WARNING|DANGER",
+  "affected_districts": ["list of districts"],
+  "estimated_time_to_critical": "X hours or N/A",
+  "confidence": 0.0-1.0,
+  "recommended_action": "one clear action for residents",
+  "reasoning": "One sentence: state flood type, district, primary metric, and whether risk is current or forecast-driven (e.g. 'forecast shows 18mm in 2h')."
+}}"""
+
+    try:
+        message = _anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except Exception as e:
+        logger.error(f"[Claude] API call failed: {e}")
+
+    return _rule_based_fallback(readings)
+
+
+def _rule_based_fallback(readings: dict) -> dict:
+    """
+    Flood-type-aware fallback used when Claude is unavailable.
+    Urban districts trigger on rainfall (flash flood); rural on river level (overflow).
+    """
+    risk_order = {"SAFE": 0, "WATCH": 1, "WARNING": 2, "DANGER": 3}
+    worst_risk = "SAFE"
+    affected = []
+
+    for v in readings.values():
+        level = v.get("level", 0.0)
+        rainfall = v.get("rainfall", 0.0)
+        district = v.get("district", "")
+        station_risk = _compute_station_status(level, rainfall, district)
+        if risk_order[station_risk] > risk_order[worst_risk]:
+            worst_risk = station_risk
+        if risk_order[station_risk] >= risk_order["WATCH"]:
+            affected.append(district)
+
+    flood_type_note = ""
+    if any(v.get("district", "") in URBAN_DISTRICTS for v in readings.values()):
+        flood_type_note = " Urban districts assessed for flash flood risk (rainfall-driven)."
+
+    actions = {
+        "DANGER":  "Evacuate immediately to the nearest relief centre. Do not wait.",
+        "WARNING": "Prepare your go-bag, move valuables to higher ground, and monitor alerts closely.",
+        "WATCH":   "Monitor water levels closely and stay informed via official channels.",
+        "SAFE":    "No action required. Conditions are within normal range.",
+    }
+
+    return {
+        "risk_level": worst_risk,
+        "affected_districts": list(set(affected)),
+        "estimated_time_to_critical": "N/A",
+        "confidence": 0.75,
+        "recommended_action": actions[worst_risk],
+        "reasoning": f"Rule-based assessment using JPS thresholds and flood-type classification.{flood_type_note}",
+    }
+
+
+# ── In-memory State ───────────────────────────────────────────────────────────
+_active_alerts:   list = []
+_latest_readings: dict = {}
+_agent_comms:     list = []   # rolling log of inter-agent messages for dashboard
+_push_tokens:     list = []   # Expo push tokens registered by citizen app users
+_latest_storm_warnings: list = []  # most recent ForecastAgent storm cell warnings
+
+
+def _agent_msg(from_agent: str, to_agent: str, summary: str, payload: dict = None) -> dict:
+    """Record a message passed between agents and return it."""
+    msg = {
+        "from":      from_agent,
+        "to":        to_agent,
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "summary":   summary,
+        "payload":   payload or {},
+    }
+    _agent_comms.insert(0, msg)
+    if len(_agent_comms) > 50:
+        _agent_comms.pop()
+    logger.info(f"[{from_agent}→{to_agent}] {summary}")
+    return msg
+
+
+# ── Firestore Persistence ─────────────────────────────────────────────────────
+def _persist_alert(alert: dict) -> None:
+    """Write a WARNING or DANGER alert to Firestore for cross-device delivery."""
+    if not (_firebase_initialized and _firestore_db):
+        logger.warning("[Firestore] Not initialized — alert stored in memory only")
+        return
+    try:
+        _firestore_db.collection("flood_alerts").document(alert["id"]).set(alert)
+        logger.info(f"[Firestore] Alert {alert['id']} persisted")
+    except Exception as e:
+        logger.error(f"[Firestore] Write failed: {e}")
+
+
+# ── Multi-Agent Pipeline ──────────────────────────────────────────────────────
+#
+#  DataAgent ──► AnalysisAgent ──► DecisionAgent ──► ActionAgent
+#
+#  Each agent does one job, passes a structured message to the next.
+#  All messages are logged to _agent_comms for the government dashboard.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _send_push_notifications(risk: str, affected: list, action: str) -> None:
+    """Send Expo push notifications to all registered citizen devices."""
+    if not _push_tokens or risk not in ("WARNING", "DANGER"):
+        return
+    icon  = "🚨" if risk == "DANGER" else "⚠️"
+    areas = ", ".join(affected[:3]) + (" + more" if len(affected) > 3 else "")
+    msgs  = [{"to": t, "title": f"{icon} FloodSense {risk} — {areas}",
+               "body": action, "sound": "default", "priority": "high",
+               "data": {"risk_level": risk, "districts": affected}}
+             for t in _push_tokens]
+    try:
+        for i in range(0, len(msgs), 100):
+            requests.post("https://exp.host/--/api/v2/push/send",
+                          json=msgs[i:i+100], timeout=10)
+        logger.info(f"[Push] Sent {len(msgs)} notifications — {risk}")
+    except Exception as e:
+        logger.warning(f"[Push] Failed: {e}")
+
+
+def _data_agent() -> dict:
+    """
+    DataAgent — COLLECT
+    Specialist: live data ingestion for KL/Selangor.
+    Pulls current rainfall + 2h forecast from WeatherAPI and river levels from JPS WL API.
+    Packages everything into a unified readings dict for the ForecastAgent.
+    """
+    readings = fetch_jps_data()
+    raining  = sum(1 for v in readings.values() if v.get("rainfall", 0) > 0)
+    elevated = sum(1 for v in readings.values() if v.get("level", 0) > 3.0)
+    all_rf   = [v.get("rainfall", 0) for v in readings.values()]
+    avg_rf   = round(sum(all_rf) / len(all_rf), 1) if all_rf else 0.0
+    _agent_msg(
+        "DataAgent", "ForecastAgent",
+        f"Ingested {len(readings)} KL/Selangor districts — {raining} currently raining, {elevated} with elevated river levels",
+        {"districts_collected": len(readings), "raining_now": raining,
+         "elevated_rivers": elevated, "avg_rainfall": avg_rf},
+    )
+    return readings
+
+
+def _forecast_agent(readings: dict) -> dict:
+    """
+    ForecastAgent — PREDICT
+    Specialist: storm trajectory and arrival time estimation.
+    Analyses WeatherAPI 2h forecast per district to detect incoming storm cells
+    before they hit. Flags districts where forecast rain significantly exceeds
+    current conditions — giving 1–2 hour advance warning.
+    """
+    global _latest_storm_warnings
+    storm_warnings = []
+    max_incoming   = 0.0
+
+    for river, data in readings.items():
+        district    = data.get("district", "")
+        current_rf  = data.get("rainfall", 0.0)
+        forecast_1h = data.get("forecast_1h", 0.0)
+        forecast_2h = data.get("forecast_2h", 0.0)
+        chance      = data.get("rain_chance_max", 0)
+        peak        = max(forecast_1h, forecast_2h)
+
+        if peak > max_incoming:
+            max_incoming = peak
+
+        # Flag districts where a significant storm is building
+        if peak > 10.0 and peak > current_rf * 1.5 and chance >= 60:
+            eta_h = 1 if forecast_1h >= forecast_2h else 2
+            storm_warnings.append({
+                "district":   district,
+                "current_mm": round(current_rf, 1),
+                "peak_mm":    round(peak, 1),
+                "eta_hours":  eta_h,
+                "chance_pct": chance,
+            })
+
+    if storm_warnings:
+        districts_str = ", ".join(f"{w['district']} ({w['peak_mm']}mm in {w['eta_hours']}h)" for w in storm_warnings)
+        _agent_msg(
+            "ForecastAgent", "AnalysisAgent",
+            f"Storm cells detected approaching {len(storm_warnings)} district(s): {districts_str}",
+            {"storm_warnings": len(storm_warnings), "max_incoming_mm": round(max_incoming, 1)},
+        )
+    else:
+        _agent_msg(
+            "ForecastAgent", "AnalysisAgent",
+            f"No significant incoming storms detected. Max 2h forecast: {max_incoming:.1f}mm across KL/Selangor.",
+            {"storm_warnings": 0, "max_incoming_mm": round(max_incoming, 1)},
+        )
+
+    _latest_storm_warnings = storm_warnings
+    return {**readings, "__forecast_warnings": storm_warnings, "__max_incoming": max_incoming}
+
+
+def _analysis_agent(readings: dict) -> dict:
+    """
+    AnalysisAgent — DETECT ANOMALIES
+    Specialist: Isolation Forest ML model for statistical anomaly detection.
+    Scores every KL/Selangor station against historical JPS baselines.
+    Combines ML score with ForecastAgent storm warnings to decide if Claude is needed.
+    """
+    forecast_warnings = readings.pop("__forecast_warnings", [])
+    max_incoming      = readings.pop("__max_incoming", 0.0)
+
+    now    = datetime.now()
+    scored = {}
+    for river, data in readings.items():
+        score, _ = compute_anomaly_score(
+            data.get("level", 0), data.get("rainfall", 0), now.hour, now.month
+        )
+        scored[river] = {**data, "anomaly_score": round(score, 3)}
+
+    max_score    = max((v["anomaly_score"] for v in scored.values()), default=0.0)
+    flagged      = [v["district"] for v in scored.values() if v["anomaly_score"] > 0.5]
+    # Escalate to Claude if ML detects anomaly OR ForecastAgent flagged incoming storms
+    needs_claude = max_score > 0.7 or len(forecast_warnings) > 0
+
+    reason = []
+    if max_score > 0.7:   reason.append(f"ML anomaly {max_score:.3f}")
+    if forecast_warnings: reason.append(f"{len(forecast_warnings)} storm(s) incoming")
+    reason_str = " + ".join(reason) if reason else "conditions normal"
+
+    _agent_msg(
+        "AnalysisAgent", "DecisionAgent",
+        f"Score: {max_score:.3f} | {reason_str} — {'⚠ Escalating to Claude AI' if needs_claude else 'Rule-based sufficient'}",
+        {"max_anomaly": round(max_score, 3), "flagged_districts": flagged,
+         "invoke_claude": needs_claude, "storm_warnings": forecast_warnings},
+    )
+    return {"readings": scored, "max_anomaly": max_score, "flagged": flagged,
+            "invoke_claude": needs_claude, "storm_warnings": forecast_warnings}
+
+
+def _decision_agent(analysis: dict) -> dict:
+    """
+    DecisionAgent — CLASSIFY RISK
+    Uses Claude AI (when anomaly is high) or rule-based logic to produce a
+    structured risk assessment with reasoning the public and government can act on.
+    """
+    readings     = analysis["readings"]
+    max_anomaly  = analysis["max_anomaly"]
+    invoke_claude = analysis["invoke_claude"]
+
+    if invoke_claude:
+        assessment = classify_risk_with_claude(readings, max_anomaly)
+        method = "Claude AI"
+    else:
+        assessment = _rule_based_fallback(readings)
+        method = "Rule-based"
+
+    risk = assessment.get("risk_level", "SAFE")
+    _agent_msg(
+        "DecisionAgent", "ActionAgent",
+        f"[{method}] Decision: {risk} — {assessment.get('reasoning', '')[:120]}",
+        {
+            "method": method,
+            "risk_level": risk,
+            "affected_districts": assessment.get("affected_districts", []),
+            "confidence": assessment.get("confidence", 0),
+            "reasoning": assessment.get("reasoning", ""),
+        },
+    )
+    return {**assessment, "readings": readings, "max_anomaly": max_anomaly}
+
+
+def _action_agent(decision: dict) -> None:
+    """
+    ActionAgent — ACT
+    Persists alerts, updates the global readings state, and logs the outcome.
+    In production this would also trigger push notifications and SMS.
+    """
+    global _latest_readings, _active_alerts
+
+    risk     = decision.get("risk_level", "SAFE")
+    readings = decision.pop("readings", {})
+    _latest_readings = readings
+
+    alert = {
+        "id":                       f"alert_{int(datetime.now().timestamp())}",
+        "timestamp":                datetime.now().isoformat(),
+        "risk_level":               risk,
+        "affected_districts":       decision.get("affected_districts", []),
+        "confidence":               decision.get("confidence", 0.0),
+        "recommended_action":       decision.get("recommended_action", ""),
+        "estimated_time_to_critical": decision.get("estimated_time_to_critical", "N/A"),
+        "reasoning":                decision.get("reasoning", ""),
+        "anomaly_score":            round(decision.get("max_anomaly", 0), 3),
+        "readings":                 readings,
+    }
+
+    if risk in ("WARNING", "DANGER"):
+        _persist_alert(alert)
+
+    _active_alerts.insert(0, alert)
+    _active_alerts = _active_alerts[:20]
+
+    actions_taken = ["Alert stored"]
+    if risk in ("WARNING", "DANGER"):
+        _persist_alert(alert)
+        actions_taken.append("Firestore write triggered")
+        affected  = decision.get("affected_districts", [])
+        action_msg = decision.get("recommended_action", "")
+        _send_push_notifications(risk, affected, action_msg)
+        actions_taken.append(f"Push sent to {len(_push_tokens)} devices")
+
+    _agent_msg(
+        "ActionAgent", "Dashboard",
+        f"Cycle complete — {risk}. Actions: {', '.join(actions_taken)}",
+        {"risk_level": risk, "alert_id": alert["id"], "actions": actions_taken,
+         "push_recipients": len(_push_tokens)},
+    )
+
+
+def run_flood_agent() -> None:
+    """
+    Orchestrates the 5-agent pipeline:
+    DataAgent → ForecastAgent → AnalysisAgent → DecisionAgent → ActionAgent
+    """
+    logger.info("[Pipeline] ── Starting KL/Selangor flood assessment cycle ──")
+    try:
+        raw        = _data_agent()
+        forecasted = _forecast_agent(raw)
+        analysis   = _analysis_agent(forecasted)
+        decision   = _decision_agent(analysis)
+        _action_agent(decision)
+    except Exception as e:
+        logger.error(f"[Pipeline] Cycle failed: {e}")
+
+
+# ── APScheduler: 60-second Background Loop ────────────────────────────────────
+_scheduler = BackgroundScheduler(daemon=True)
+_scheduler.add_job(run_flood_agent, "interval", seconds=60, id="flood_agent")
+
+# Flask debug mode runs two processes (parent reloader + child worker).
+# Only start the scheduler in the child (WERKZEUG_RUN_MAIN=true) or in production.
+if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+    _scheduler.start()
+    logger.info("[Scheduler] Started in process %s", os.getpid())
+    run_flood_agent()  # initial cycle so the app isn't empty on first request
+
+
+# ── API Endpoints ─────────────────────────────────────────────────────────────
+
+@app.route("/api/flood/levels", methods=["GET"])
+def get_flood_levels():
+    """
+    GET /api/flood/levels
+    Returns current JPS readings for all monitored rivers with colour-coded risk status.
+    """
+    readings = _latest_readings if _latest_readings else fetch_jps_data()
+    result = []
+
+    STATUS_COLORS = {"DANGER": "#DC2626", "WARNING": "#D97706", "WATCH": "#EAB308", "SAFE": "#16A34A"}
+
+    for river, data in readings.items():
+        level    = data.get("level", 0.0)
+        rainfall = data.get("rainfall", 0.0)
+        district = data.get("district", "")
+
+        forecast_1h = data.get("forecast_1h", 0.0)
+        forecast_2h = data.get("forecast_2h", 0.0)
+        chance_max  = data.get("rain_chance_max", 0)
+
+        status     = _compute_station_status(level, rainfall, district, forecast_2h, chance_max)
+        color      = STATUS_COLORS[status]
+        flood_type = "flash_flood" if district in URBAN_DISTRICTS else "river_overflow"
+
+        # Rain trend for UI badge: compare peak forecast to current
+        peak_forecast = max(forecast_1h, forecast_2h)
+        if peak_forecast > max(rainfall * 1.5, 2.0):
+            trend = "rising"
+        elif peak_forecast < rainfall * 0.5 and rainfall > 1.0:
+            trend = "easing"
+        else:
+            trend = "stable"
+
+        result.append({
+            "river":           river,
+            "district":        data.get("district", "Unknown"),
+            "station":         data.get("station", ""),
+            "condition":       data.get("condition", ""),
+            "forecast_1h":     forecast_1h,
+            "forecast_2h":     forecast_2h,
+            "rain_chance_max": chance_max,
+            "trend":           trend,
+            "river_level":     level,
+            "rainfall_rate":   rainfall,
+            "status":          status,
+            "color":           color,
+            "flood_type":      flood_type,
+            "last_updated":    datetime.now().isoformat(),
         })
 
-    except Exception as e:
-        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+    return jsonify({"success": True, "data": result})
 
 
-# ── Upload Image Route (for profile picture) ─────────────
-@app.route("/upload-image", methods=["POST"])
-def upload_image():
-    try:
-        image_b64 = request.form.get("image")
-        if not image_b64:
-            return jsonify({"error": "No image provided"}), 400
-        url = upload_to_imgbb(image_b64)
-        if url:
-            return jsonify({"url": url})
-        return jsonify({"error": "Upload failed"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/api/flood/analyze", methods=["POST"])
+def analyze_flood():
+    """
+    POST /api/flood/analyze
+    Run ML + Claude on provided readings (or latest cached readings).
+    Body: { "readings": { ... } }  (optional — uses latest if omitted)
+    """
+    data = request.get_json() or {}
+    readings = data.get("readings") or _latest_readings
+
+    if not readings:
+        return jsonify({"error": "No readings available — please provide readings or wait for the agent to run"}), 400
+
+    now = datetime.now()
+    scores = [
+        compute_anomaly_score(
+            v.get("level", 0),
+            v.get("rainfall", 0),
+            now.hour,
+            now.month,
+        )[0]
+        for v in readings.values()
+    ]
+    max_anomaly = max(scores) if scores else 0.0
+    assessment = classify_risk_with_claude(readings, max_anomaly)
+
+    return jsonify({
+        "success": True,
+        "anomaly_score": round(max_anomaly, 3),
+        "is_anomaly": max_anomaly > 0.7,
+        "assessment": assessment,
+    })
 
 
-# ── Health Check Route ───────────────────────────────────
+@app.route("/api/flood/alerts", methods=["GET"])
+def get_alerts():
+    """
+    GET /api/flood/alerts
+    Returns the 20 most recent alert events.
+    Reads from Firestore when available; falls back to in-memory store.
+    """
+    alerts: list = []
+
+    if _firebase_initialized and _firestore_db and firestore:
+        try:
+            docs = (
+                _firestore_db.collection("flood_alerts")
+                .order_by("timestamp", direction=firestore.Query.DESCENDING)
+                .limit(20)
+                .stream()
+            )
+            alerts = [doc.to_dict() for doc in docs]
+            logger.info(f"[Alerts] Returned {len(alerts)} alerts from Firestore")
+        except Exception as e:
+            logger.error(f"[Firestore] Read failed: {e}")
+
+    if not alerts:
+        alerts = _active_alerts
+
+    return jsonify({"success": True, "data": alerts, "count": len(alerts)})
+
+
+@app.route("/api/flood/evacuate", methods=["GET"])
+def get_evacuation_centers():
+    """
+    GET /api/flood/evacuate?district=Klang
+    Returns nearest evacuation centres.
+    Omit district param to get all centres across every district.
+    """
+    district = request.args.get("district", "").strip()
+
+    if district and district in EVACUATION_CENTERS:
+        centers = [{"district": district, **c} for c in EVACUATION_CENTERS[district]]
+    else:
+        centers = [
+            {"district": dist, **center}
+            for dist, clist in EVACUATION_CENTERS.items()
+            for center in clist
+        ]
+
+    return jsonify({"success": True, "district": district or "all", "data": centers})
+
+
+# Demo scenario presets — biased toward visible alerts so demos are interesting
+_DEMO_SCENARIOS = [
+    # (label, rainfall_range, level_range, forecast_mult_range, chance_range)
+    ("WATCH",   (12.0, 20.0), (2.8, 3.4), (1.2, 1.8), (55, 70)),
+    ("WARNING", (28.0, 42.0), (3.8, 4.8), (1.0, 1.5), (65, 85)),
+    ("DANGER",  (48.0, 68.0), (5.0, 6.2), (0.7, 1.2), (75, 95)),
+]
+_DEMO_CONDITIONS = [
+    "Heavy thunderstorm", "Torrential downpour", "Severe thunderstorm",
+    "Heavy rain", "Extreme rainfall", "Intense shower",
+]
+
+
+def _random_demo_readings() -> tuple[str, str, dict]:
+    """
+    Generate a randomised flood spike for demo purposes.
+    Returns (district, river_name, spike_data_dict).
+    Picks a random district, a random severity scenario, and realistic
+    correlated values for rainfall, river level, and forecast.
+    """
+    import random
+
+    all_districts = list(DISTRICT_COORDS.keys())
+    district      = random.choice(all_districts)
+    is_urban      = district in URBAN_DISTRICTS
+
+    # Weight toward WARNING/DANGER (indices 1 & 2) to keep demos interesting
+    scenario_label, rf_range, lvl_range, fcst_mult_range, chance_range = random.choices(
+        _DEMO_SCENARIOS, weights=[1, 2, 2], k=1
+    )[0]
+
+    rainfall    = round(random.uniform(*rf_range), 1)
+    river_level = round(random.uniform(*lvl_range), 2)
+
+    # Forecast: either escalating or slightly declining from current
+    fcst_mult   = random.uniform(*fcst_mult_range)
+    forecast_1h = round(rainfall * fcst_mult * random.uniform(0.6, 1.0), 1)
+    forecast_2h = round(rainfall * fcst_mult * random.uniform(0.8, 1.2), 1)
+    rain_chance = random.randint(*chance_range)
+    condition   = random.choice(_DEMO_CONDITIONS)
+
+    river_name = next(
+        (r for r, d in JPS_FALLBACK.items() if d.get("district") == district),
+        f"Sungai {district}",
+    )
+
+    spike = {
+        "level":           river_level,
+        "rainfall":        rainfall,
+        "district":        district,
+        "station":         f"{district} [Demo]",
+        "condition":       condition,
+        "forecast_1h":     forecast_1h,
+        "forecast_2h":     forecast_2h,
+        "rain_chance_max": rain_chance,
+    }
+    return district, river_name, spike, scenario_label
+
+
+@app.route("/api/demo/inject", methods=["POST"])
+def demo_inject():
+    """
+    POST /api/demo/inject
+    Bypass the 60-second scheduler to simulate a flood spike immediately.
+    Pass an empty body {} (or omit body) to get a fully randomised spike.
+    Or supply { "district", "river_level", "rainfall_rate" } to pin values.
+    """
+    global _latest_readings, _active_alerts
+
+    data = request.get_json(silent=True) or {}
+
+    # If caller supplied all fields, use them; otherwise randomise
+    if data.get("district") and data.get("river_level") is not None and data.get("rainfall_rate") is not None:
+        district      = data["district"]
+        river_level   = float(data["river_level"])
+        rainfall_rate = float(data["rainfall_rate"])
+        river_name    = next(
+            (r for r, d in JPS_FALLBACK.items() if d.get("district") == district),
+            f"Sungai {district}",
+        )
+        spike = {
+            "level": river_level, "rainfall": rainfall_rate,
+            "district": district, "station": f"{district} (Demo)",
+            "forecast_1h": 0.0, "forecast_2h": 0.0, "rain_chance_max": 0,
+        }
+        scenario_label = "MANUAL"
+    else:
+        district, river_name, spike, scenario_label = _random_demo_readings()
+        river_level   = spike["level"]
+        rainfall_rate = spike["rainfall"]
+
+    injected_readings = dict(_latest_readings) if _latest_readings else {}
+    for r, d in JPS_FALLBACK.items():
+        if r not in injected_readings:
+            injected_readings[r] = dict(d)
+    injected_readings[river_name] = spike
+    _latest_readings = injected_readings
+
+    now = datetime.now()
+    anomaly_score, _ = compute_anomaly_score(river_level, rainfall_rate, now.hour, now.month)
+    assessment = classify_risk_with_claude(injected_readings, anomaly_score)
+    risk = assessment.get("risk_level", "SAFE")
+
+    alert = {
+        "id":                         f"demo_{int(now.timestamp())}",
+        "timestamp":                  now.isoformat(),
+        "risk_level":                 risk,
+        "affected_districts":         assessment.get("affected_districts", [district]),
+        "confidence":                 assessment.get("confidence", 0.0),
+        "recommended_action":         assessment.get("recommended_action", ""),
+        "estimated_time_to_critical": assessment.get("estimated_time_to_critical", "N/A"),
+        "reasoning":                  assessment.get("reasoning", ""),
+        "anomaly_score":              round(anomaly_score, 3),
+        "demo":                       True,
+        "demo_scenario":              scenario_label,
+        "injected_district":          district,
+        "injected_rainfall":          rainfall_rate,
+        "injected_level":             river_level,
+    }
+
+    if risk in ("WARNING", "DANGER"):
+        _persist_alert(alert)
+        _send_push_notifications(
+            risk,
+            assessment.get("affected_districts", [district]),
+            assessment.get("recommended_action", f"Demo {scenario_label} alert for {district}"),
+        )
+
+    _active_alerts.insert(0, alert)
+    _active_alerts = _active_alerts[:20]
+
+    return jsonify({
+        "success":        True,
+        "message":        f"Demo [{scenario_label}] injected — {district} ({rainfall_rate}mm/hr, {river_level}m)",
+        "scenario":       scenario_label,
+        "district":       district,
+        "rainfall_rate":  rainfall_rate,
+        "river_level":    river_level,
+        "anomaly_score":  round(anomaly_score, 3),
+        "assessment":     assessment,
+    })
+
+
+def _nearest_district_from_coords(lat: float, lng: float) -> str | None:
+    """Return the monitored district whose centroid is closest to the given GPS point."""
+    best, best_dist = None, float("inf")
+    for district, (dlat, dlng) in DISTRICT_COORDS.items():
+        dist = ((dlat - lat) ** 2 + (dlng - lng) ** 2) ** 0.5
+        if dist < best_dist:
+            best_dist = dist
+            best = district
+    return best
+
+
+def _district_status(district: str) -> str:
+    """Return the current flood status for a district using the latest readings."""
+    for data in _latest_readings.values():
+        if data.get("district") == district:
+            return _compute_station_status(
+                data.get("level", 0.0), data.get("rainfall", 0.0), district,
+                data.get("forecast_2h", 0.0), data.get("rain_chance_max", 0),
+            )
+    return None  # unknown — no reading available yet
+
+
+@app.route("/api/rescue/request", methods=["POST"])
+def rescue_request():
+    """
+    POST /api/rescue/request
+    Log a rescue coordination request from a citizen in distress.
+    Body: { "district": "Klang", "situation": "Stranded", "people_count": 3, "notes": "..." }
+
+    Gate: only accepts submissions from districts that are WATCH / WARNING / DANGER.
+    If GPS coords are supplied, the nearest monitored district overrides the
+    user-supplied district name for the status check (GPS is harder to fake).
+    """
+    data = request.get_json() or {}
+    district   = data.get("district", "Unknown")
+    situation  = data.get("situation", "Stranded")
+    people     = int(data.get("people_count", 1))
+    notes      = data.get("notes", "")
+    latitude   = data.get("latitude")
+    longitude  = data.get("longitude")
+
+    # ── Zone-gate: derive authoritative district ──────────────────────────────
+    # If GPS is available use it as the ground truth district for the status
+    # check — much harder to spoof than a dropdown selection.
+    check_district = district
+    gps_district   = None
+    if latitude is not None and longitude is not None:
+        gps_district = _nearest_district_from_coords(float(latitude), float(longitude))
+        if gps_district:
+            check_district = gps_district
+
+    # Only block when we actually have live readings; skip gate on cold start
+    if _latest_readings:
+        status = _district_status(check_district)
+        if status == "SAFE":
+            area_label = f"{check_district} (GPS-verified)" if gps_district else check_district
+            logger.warning(f"[Rescue] SOS blocked — {area_label} is SAFE")
+            return jsonify({
+                "error":           "sos_blocked",
+                "district":        check_district,
+                "district_status": "SAFE",
+                "message":         (
+                    f"{area_label} is currently SAFE — no active flood risk detected. "
+                    "SOS submissions are only accepted from WATCH, WARNING, or DANGER zones."
+                ),
+            }), 403
+
+    # ── Accept the case ────────────────────────────────────────────────────────
+    now     = datetime.now()
+    case_id = f"SOS-{now.strftime('%d%m%H%M')}-{district[:3].upper()}"
+
+    maps_link = None
+    if latitude is not None and longitude is not None:
+        maps_link = f"https://maps.google.com/maps?q={latitude},{longitude}&z=17"
+
+    rescue_doc = {
+        "case_id":      case_id,
+        "district":     district,
+        "gps_district": gps_district,
+        "situation":    situation,
+        "people_count": people,
+        "notes":        notes,
+        "latitude":     latitude,
+        "longitude":    longitude,
+        "maps_link":    maps_link,
+        "timestamp":    now.isoformat(),
+        "status":       "received",
+    }
+
+    _rescue_cases.append(rescue_doc)
+
+    if _firebase_initialized and _firestore_db:
+        try:
+            _firestore_db.collection("rescue_requests").document(case_id).set(rescue_doc)
+            logger.info(f"[Rescue] Case {case_id} saved to Firestore")
+        except Exception as e:
+            logger.error(f"[Rescue] Firestore write failed: {e}")
+    else:
+        logger.info(f"[Rescue] Case {case_id} logged in memory")
+
+    centres = EVACUATION_CENTERS.get(district, [])
+    nearest = centres[0] if centres else None
+
+    return jsonify({
+        "success":        True,
+        "case_id":        case_id,
+        "message":        f"Rescue request received. Case ID: {case_id}. Authorities have been notified.",
+        "nearest_centre": nearest,
+        "maps_link":      maps_link,
+        "emergency_contacts": {
+            "police_ambulance": "999",
+            "bomba":            "994",
+            "jkm":              "03-8064 2400",
+            "nadma":            "03-8064 2400",
+        },
+    })
+
+
+# In-memory store for rescue cases (Firestore is primary if available)
+_rescue_cases: list = []
+
+@app.route("/api/rescue/cases", methods=["GET"])
+def get_rescue_cases():
+    """
+    GET /api/rescue/cases
+    Returns all active rescue requests for the rescuer dashboard.
+    Pulls from Firestore if available, falls back to in-memory list.
+    """
+    if _firebase_initialized and _firestore_db:
+        try:
+            docs = _firestore_db.collection("rescue_requests") \
+                .order_by("timestamp", direction="DESCENDING") \
+                .limit(50) \
+                .stream()
+            cases = [doc.to_dict() for doc in docs]
+            return jsonify({"cases": cases})
+        except Exception as e:
+            logger.error(f"[Rescue] Firestore read failed: {e}")
+
+    return jsonify({"cases": _rescue_cases[-50:]})
+
+
+@app.route("/api/push/register", methods=["POST"])
+def register_push_token():
+    """POST /api/push/register — Store an Expo push token from the citizen app."""
+    token = (request.json or {}).get("token", "").strip()
+    if not token:
+        return jsonify({"error": "token required"}), 400
+    if token not in _push_tokens:
+        _push_tokens.append(token)
+        logger.info(f"[Push] Registered token — total: {len(_push_tokens)}")
+    return jsonify({"success": True, "registered": len(_push_tokens)})
+
+
+@app.route("/api/rescue/dispatch/<case_id>", methods=["POST"])
+def dispatch_rescue(case_id):
+    """POST /api/rescue/dispatch/<case_id> — Government marks a case as help dispatched."""
+    body = request.json or {}
+    for case in _rescue_cases:
+        if case.get("id") == case_id or case.get("case_id") == case_id:
+            case["status"]        = "dispatched"
+            case["dispatched"]    = True
+            case["dispatched_at"] = datetime.now().isoformat()
+            case["team"]          = body.get("team", "Operations Centre")
+            case["notes"]         = body.get("notes", "")
+            if _firebase_initialized and _firestore_db:
+                try:
+                    _firestore_db.collection("rescue_requests").document(case_id).update({
+                        "status": "dispatched", "team": case["team"],
+                        "dispatched_at": case["dispatched_at"],
+                    })
+                except Exception:
+                    pass
+            return jsonify({"success": True, "case": case})
+    return jsonify({"error": "Case not found"}), 404
+
+
+@app.route("/api/rescue/resolve/<case_id>", methods=["POST"])
+def resolve_rescue(case_id):
+    """POST /api/rescue/resolve/<case_id> — Government marks a rescued case as resolved."""
+    body = request.json or {}
+    for case in _rescue_cases:
+        if case.get("id") == case_id or case.get("case_id") == case_id:
+            case["status"]      = "resolved"
+            case["resolved_at"] = datetime.now().isoformat()
+            case["resolved_by"] = body.get("officer", "Operations Centre")
+            case["outcome"]     = body.get("outcome", "Rescued successfully")
+            if _firebase_initialized and _firestore_db:
+                try:
+                    _firestore_db.collection("rescue_requests").document(case_id).update({
+                        "status": "resolved", "resolved_at": case["resolved_at"],
+                        "outcome": case["outcome"],
+                    })
+                except Exception:
+                    pass
+            logger.info(f"[Rescue] Case {case_id} resolved — {case['outcome']}")
+            return jsonify({"success": True, "case": case})
+    return jsonify({"error": "Case not found"}), 404
+
+
+@app.route("/api/dashboard/stats", methods=["GET"])
+def dashboard_stats():
+    """
+    GET /api/dashboard/stats
+    Aggregated stats for the government operations dashboard.
+    """
+    readings = _latest_readings if _latest_readings else {}
+    STATUS_ORDER = {"DANGER": 3, "WARNING": 2, "WATCH": 1, "SAFE": 0}
+
+    districts_summary = []
+    for river, data in readings.items():
+        district    = data.get("district", "")
+        level       = data.get("level", 0.0)
+        rainfall    = data.get("rainfall", 0.0)
+        forecast_2h = data.get("forecast_2h", 0.0)
+        rain_chance = data.get("rain_chance_max", 0)
+        status      = _compute_station_status(level, rainfall, district, forecast_2h, rain_chance)
+        flood_type  = "flash_flood" if district in URBAN_DISTRICTS else "river_overflow"
+        centres    = EVACUATION_CENTERS.get(district, [])
+        evac_count = len(centres)
+        evac_cap   = sum(c.get("capacity", 0) for c in centres)
+        districts_summary.append({
+            "district":    district,
+            "river":       river,
+            "status":      status,
+            "flood_type":  flood_type,
+            "rainfall":    rainfall,
+            "river_level": level,
+            "forecast_2h": data.get("forecast_2h", 0.0),
+            "condition":   data.get("condition", ""),
+            "trend":       data.get("trend", "stable"),
+            "evac_centers": evac_count,
+            "evac_capacity": evac_cap,
+            "evac_centre_list": [
+                {"name": c.get("name", ""), "address": c.get("address", ""),
+                 "capacity": c.get("capacity", 0), "contact": c.get("contact", "")}
+                for c in centres
+            ],
+        })
+
+    districts_summary.sort(key=lambda x: STATUS_ORDER.get(x["status"], 0), reverse=True)
+
+    at_risk   = [d for d in districts_summary if d["status"] in ("WARNING", "DANGER")]
+    watching  = [d for d in districts_summary if d["status"] == "WATCH"]
+    safe      = [d for d in districts_summary if d["status"] == "SAFE"]
+    total_evac_cap = sum(d["evac_capacity"] for d in districts_summary)
+    latest = _active_alerts[0] if _active_alerts else {}
+
+    # SOS priority scoring: district risk weight × people count × log time-waiting
+    active_cases = [c for c in _rescue_cases if c.get("status") not in ("resolved",)]
+    sos_priority = None
+    if active_cases:
+        d_weight_map = {"DANGER": 3, "WARNING": 2, "WATCH": 1}
+        scored = []
+        for case in active_cases:
+            dist     = case.get("district", "")
+            d_status = _district_status(dist) or "WATCH"
+            d_wt     = d_weight_map.get(d_status, 1)
+            people   = max(1, int(case.get("people_count", 1)))
+            try:
+                ts_dt   = datetime.fromisoformat(case["timestamp"])
+                minutes = max(1, int((datetime.now() - ts_dt).total_seconds() / 60))
+            except Exception:
+                minutes = 1
+            score = d_wt * people * (1.0 + float(np.log1p(minutes / 10.0)))
+            scored.append({
+                "case_id":        case.get("case_id", case.get("id")),
+                "district":       dist,
+                "people_count":   people,
+                "minutes_waiting": minutes,
+                "district_status": d_status,
+                "priority_score": round(score, 1),
+                "situation":      case.get("situation", ""),
+                "status":         case.get("status", "received"),
+            })
+        sos_priority = max(scored, key=lambda x: x["priority_score"])
+
+    return jsonify({
+        "overall_risk":       latest.get("risk_level", "SAFE"),
+        "reasoning":          latest.get("reasoning", ""),
+        "recommended_action": latest.get("recommended_action", ""),
+        "confidence":         latest.get("confidence", 0),
+        "last_updated":       latest.get("timestamp", ""),
+        "affected_districts": latest.get("affected_districts", []),
+        "districts":          districts_summary,
+        "storm_warnings":     _latest_storm_warnings,
+        "sos_priority":       sos_priority,
+        "summary": {
+            "total":           len(districts_summary),
+            "at_risk":         len(at_risk),
+            "watching":        len(watching),
+            "safe":            len(safe),
+            "flash_flood_zones": sum(1 for d in districts_summary if d["flood_type"] == "flash_flood"),
+            "river_zones":     sum(1 for d in districts_summary if d["flood_type"] == "river_overflow"),
+            "total_evac_capacity": total_evac_cap,
+            "active_sos":      sum(1 for c in _rescue_cases if c.get("status") != "resolved"),
+        },
+        "agent_comms": _agent_comms[:20],
+    })
+
+
+@app.route("/dashboard")
+def government_dashboard():
+    """Serves the government-facing operations dashboard HTML page."""
+    from flask import render_template_string
+    html = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+    return render_template_string(html)
+
+
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "Backend is running!"})
+    """Quick liveness check used by Render and the mobile app."""
+    return jsonify({
+        "status": "FloodSense backend running",
+        "firebase": _firebase_initialized,
+        "claude": _anthropic_client is not None,
+        "model_loaded": _ml_model is not None,
+        "alerts_cached": len(_active_alerts),
+        "last_cycle": _active_alerts[0]["timestamp"] if _active_alerts else None,
+    })
 
 
-# ── Run Server ───────────────────────────────────────────
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)

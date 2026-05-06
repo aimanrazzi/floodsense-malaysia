@@ -1,995 +1,806 @@
-import React, { useState, useRef, useEffect } from "react"; // eslint-disable-line
+/**
+ * FloodMapScreen
+ * - "Your Area" hero card: GPS-matched nearest JPS monitoring district
+ * - Two swipeable pages: ⚡ Flash Flood | 🌊 River Overflow
+ * - Language toggle: EN / MY / 中文 / தமிழ்
+ * - Auto-refreshes every 30 seconds
+ */
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  StyleSheet,
-  Text,
-  View,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  ScrollView,
-  StatusBar,
-  Image,
-  Share,
-  Animated,
-  Alert,
+  StyleSheet, Text, View, ScrollView, TouchableOpacity,
+  ActivityIndicator, StatusBar, Animated, useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import * as ImagePicker from "expo-image-picker";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useLang } from "../context/LanguageContext";
+import * as Location from "expo-location";
 import { useTheme } from "../context/ThemeContext";
+import { useLang } from "../context/LanguageContext";
 import { translations } from "../utils/translations";
-import LanguageSelector from "../components/LanguageSelector";
-import { useAuth } from "../context/AuthContext";
-import { db } from "../firebase";
-import { collection, addDoc, doc, getDoc, setDoc } from "firebase/firestore";
+import { floodApi } from "../utils/api";
 
-import { securePost } from "../utils/api";
+// ── Design tokens ─────────────────────────────────────────────────────────────
+const FS = {
+  primary: "#1B6CA8", danger: "#DC2626", warning: "#D97706",
+  watch: "#EAB308", safe: "#16A34A", bg: "#0A1628",
+  surface: "#112240", card: "#1A3A5C", text: "#E8F4FD",
+  subtext: "#7FA8C4", border: "#1E3A5F",
+};
 
-let scammerImage = null;
-try { scammerImage = require("../assets/scammer.png"); } catch {}
+const STATUS_ICON = { DANGER: "🔴", WARNING: "🟠", WATCH: "🟡", SAFE: "🟢" };
+const STATUS_COLOR = { DANGER: FS.danger, WARNING: FS.warning, WATCH: FS.watch, SAFE: FS.safe };
 
-export default function HomeScreen({ embedded = false }) {
-  const { lang } = useLang();
-  const t = translations[lang] || translations.en;
-  const { theme } = useTheme();
-  const { user } = useAuth();
-  const [inputText, setInputText] = useState("");
-  const [image, setImage] = useState(null);
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [slowLoad, setSlowLoad] = useState(false);
-  const [error, setError] = useState(null);
-  const scoreAnim = useRef(new Animated.Value(0)).current;
-  const slowTimer = useRef(null);
-  const [cacheKey, setCacheKey] = useState(null);
-  const [reportedByUser, setReportedByUser] = useState(false);
-  const [fromScamCache, setFromScamCache] = useState(false);
+// Flash flood districts (urban, drainage-driven)
+// KL/Selangor focus — urban flash flood zones
+const URBAN_SET = new Set([
+  "Klang","Gombak","Kepong","Cheras","Ampang",
+  "Petaling Jaya","Bangsar","Subang Jaya","Shah Alam",
+]);
 
-  const toCacheKey = (text) => {
-    const SUFFIXES = /\b(sdn\.?\s*bhd\.?|sdn\s*bhd|bhd\.?|pte\.?\s*ltd\.?|ltd\.?|inc\.?|llc\.?|corp\.?|berhad|enterprise|trading|services|solutions|group)\b/gi;
-    return text
-      .toLowerCase()
-      .replace(SUFFIXES, "")         // remove business suffixes
-      .replace(/[^a-z0-9\s]/g, "")  // remove symbols entirely (no replacement)
-      .replace(/\s+/g, " ")          // collapse spaces
-      .trim()
-      .replace(/\s/g, "_")           // spaces to underscores
-      .slice(0, 200);
-  };
+// GPS coordinates — KL/Selangor districts only (mirrors backend DISTRICT_COORDS)
+const MONITOR_COORDS = {
+  "Klang":          [3.0449, 101.4468],
+  "Gombak":         [3.2353, 101.7044],
+  "Kepong":         [3.2119, 101.6293],
+  "Cheras":         [3.0945, 101.7455],
+  "Ampang":         [3.1478, 101.7618],
+  "Petaling Jaya":  [3.1073, 101.6067],
+  "Bangsar":        [3.1302, 101.6741],
+  "Subang Jaya":    [3.0565, 101.5897],
+  "Shah Alam":      [3.0733, 101.5185],
+  "Kuala Selangor": [3.3474, 101.2442],
+  "Sepang":         [2.7305, 101.7164],
+};
+
+function nearestDistrict(userLat, userLng) {
+  let best = null, bestDist = Infinity;
+  for (const [district, [dlat, dlng]] of Object.entries(MONITOR_COORDS)) {
+    const d = Math.hypot(dlat - userLat, dlng - userLng);
+    if (d < bestDist) { bestDist = d; best = district; }
+  }
+  return best;
+}
+
+function formatTime(iso) {
+  if (!iso) return "--";
+  return new Date(iso).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" });
+}
+
+function getDrainStress(rainfall, forecast2h, rainChance, tf) {
+  // Composite = current + weighted incoming forecast
+  // probability weight capped at 0.8 so forecast never fully overrides current reading
+  const probWeight = rainChance >= 40 ? Math.min(rainChance / 100, 0.8) : 0;
+  const composite  = rainfall + forecast2h * probWeight * 0.5;
+  const score      = Math.max(rainfall, composite);
+  if (score >= 50) return { label: tf.drainCrit, color: FS.danger };
+  if (score >= 30) return { label: tf.drainHigh, color: FS.warning };
+  if (score >= 15) return { label: tf.drainMod,  color: FS.watch };
+  return                  { label: tf.drainLow,  color: FS.safe };
+}
+
+const LANG_PILLS = [
+  { code: "en", label: "EN" },
+  { code: "ms", label: "MY" },
+  { code: "zh", label: "中文" },
+  { code: "ta", label: "த" },
+];
+
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function FloodMapScreen({ navigation }) {
+  useTheme();
+  const { lang, changeLang } = useLang();
+  const tf = (translations[lang] || translations.en).flood;
+  const { width: SCREEN_W } = useWindowDimensions();
+
+  const [levels,          setLevels]          = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [error,           setError]           = useState(null);
+  const [lastUpdated,     setLastUpdated]     = useState(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [prevOverallRisk, setPrevOverallRisk] = useState("SAFE");
+  const [demoInjecting,   setDemoInjecting]   = useState(false);
+  const [activeTab,       setActiveTab]       = useState(0);
+
+  // GPS state
+  const [userDistrict,   setUserDistrict]   = useState(null);   // matched district name
+  const [locationDenied, setLocationDenied] = useState(false);
+  const [locationLoading,setLocationLoading]= useState(true);
+
+  const bannerAnim = useRef(new Animated.Value(0)).current;
+  const hScrollRef = useRef(null);
+
+  // ── Fetch flood levels ──────────────────────────────────────────────────────
+  const fetchLevels = useCallback(async () => {
+    setError(null);
+    try {
+      const data = await floodApi.getLevels();
+      setLevels(data.data || []);
+      setLastUpdated(new Date().toISOString());
+    } catch {
+      setError(tf.connectionError);
+    } finally {
+      setLoading(false);
+    }
+  }, []);  // tf intentionally excluded — no need to re-fetch when language changes
 
   useEffect(() => {
-    if (result) {
-      Animated.timing(scoreAnim, {
-        toValue: result.score,
-        duration: 800,
-        useNativeDriver: false,
-      }).start();
-    } else {
-      scoreAnim.setValue(0);
-    }
-  }, [result]);
+    fetchLevels();
+    const t = setInterval(fetchLevels, 30000);
+    return () => clearInterval(t);
+  }, [fetchLevels]);
 
-  const styles = makeStyles(theme);
-
-  const pickImage = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setError("Permission to access photos is required.");
-      return;
-    }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      base64: true,
-      quality: 0.8,
-    });
-    if (!picked.canceled) {
-      setImage(picked.assets[0]);
-      setInputText("");
-      setResult(null);
-      setError(null);
-    }
-  };
-
-  const takePhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      setError("Permission to use camera is required.");
-      return;
-    }
-    const taken = await ImagePicker.launchCameraAsync({
-      base64: true,
-      quality: 0.8,
-    });
-    if (!taken.canceled) {
-      setImage(taken.assets[0]);
-      setInputText("");
-      setResult(null);
-      setError(null);
-    }
-  };
-
-  const saveToHistory = async (entry) => {
-    if (user) {
-      await addDoc(collection(db, "scans", user.uid, "entries"), entry);
-    } else {
-      const stored = await AsyncStorage.getItem("scan_history");
-      const history = stored ? JSON.parse(stored) : [];
-      history.push(entry);
-      if (history.length > 50) history.shift();
-      await AsyncStorage.setItem("scan_history", JSON.stringify(history));
-    }
-  };
-
-  const analyze = async () => {
-    if (!inputText.trim() && !image) return;
-
-    setLoading(true);
-    setSlowLoad(false);
-    setResult(null);
-    setError(null);
-    setCacheKey(null);
-    setReportedByUser(false);
-    setFromScamCache(false);
-
-    let localCacheKey = null;
-    let communityReportCount = 0;
-
-    // Check community reports + scam cache for text inputs
-    if (inputText.trim() && !image) {
-      localCacheKey = toCacheKey(inputText);
-      setCacheKey(localCacheKey);
+  // ── GPS location ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
       try {
-        const reportSnap = await getDoc(doc(db, "reports", localCacheKey));
-        if (reportSnap.exists()) {
-          communityReportCount = reportSnap.data().count || 0;
-          const reportedBy = reportSnap.data().reportedBy || [];
-          if (user && reportedBy.includes(user.uid)) {
-            setReportedByUser(true);
-          }
-        }
-      } catch {}
-
-      // Check scam cache — only SCAM results are cached
-      try {
-        const scamSnap = await getDoc(doc(db, "scam_cache", localCacheKey));
-        if (scamSnap.exists()) {
-          const cached = scamSnap.data();
-          setResult({ ...cached, reportCount: communityReportCount });
-          setFromScamCache(true);
-          setLoading(false);
-          await saveToHistory({
-            input: inputText.trim(),
-            status: cached.status,
-            score: cached.score,
-            reason: cached.reason,
-            date: new Date().toISOString(),
-            localImagePath: null,
-          });
-          return;
-        }
-      } catch {}
-    }
-
-    // Show "waking up server" hint after 6 seconds
-    slowTimer.current = setTimeout(() => setSlowLoad(true), 6000);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-
-    try {
-      const bodyData = image
-        ? { image: image.base64, mime_type: image.mimeType || "image/jpeg", lang }
-        : { text: inputText.trim(), lang };
-
-      const response = await securePost("/analyze", bodyData, controller.signal);
-
-      const data = await response.json();
-
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setResult({ ...data, reportCount: communityReportCount });
-
-        // Cache SCAM results permanently for future users
-        if (data.status === "SCAM" && localCacheKey) {
-          try {
-            await setDoc(doc(db, "scam_cache", localCacheKey), {
-              input: inputText.trim(),
-              status: data.status,
-              score: data.score,
-              reason: data.reason,
-              findings: data.findings || [],
-              cachedAt: new Date().toISOString(),
-            });
-          } catch {}
-        }
-
-        const entry = {
-          input: image ? "[Screenshot]" : inputText.trim(),
-          status: data.status,
-          score: data.score,
-          reason: data.reason,
-          date: new Date().toISOString(),
-          localImagePath: image?.uri || null,
-        };
-        await saveToHistory(entry);
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") { setLocationDenied(true); return; }
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        setUserDistrict(nearestDistrict(loc.coords.latitude, loc.coords.longitude));
+      } catch {
+        setLocationDenied(true);
+      } finally {
+        setLocationLoading(false);
       }
-    } catch (err) {
-      if (err.name === "AbortError") {
-        setError("Request timed out. The server may be starting up — please try again.");
-      } else {
-        setError("Could not connect to server. Check your internet connection.");
-      }
-    } finally {
-      clearTimeout(timeout);
-      clearTimeout(slowTimer.current);
-      setLoading(false);
-      setSlowLoad(false);
+    })();
+  }, []);
+
+  // ── Risk aggregation ────────────────────────────────────────────────────────
+  const overallRisk = levels.reduce((worst, item) => {
+    const ord = { DANGER: 4, WARNING: 3, WATCH: 2, SAFE: 1 };
+    return (ord[item.status] || 0) > (ord[worst] || 0) ? item.status : worst;
+  }, "SAFE");
+
+  useEffect(() => {
+    if (overallRisk !== prevOverallRisk) {
+      setBannerDismissed(false);
+      setPrevOverallRisk(overallRisk);
     }
+  }, [overallRisk]);
+
+  const showBanner    = !bannerDismissed && (overallRisk === "WARNING" || overallRisk === "DANGER");
+  const worstDistrict = levels.find(i => i.status === overallRisk);
+  const worstColor    = STATUS_COLOR[overallRisk] || FS.safe;
+  const worstIcon     = STATUS_ICON[overallRisk]  || "🟢";
+
+  useEffect(() => {
+    Animated.timing(bannerAnim, {
+      toValue: showBanner ? 1 : 0,
+      duration: 350,
+      useNativeDriver: true,
+    }).start();
+  }, [showBanner]);
+
+  const handleDemoInject = async () => {
+    setDemoInjecting(true);
+    try { await floodApi.demoInject(); await fetchLevels(); }
+    catch {} finally { setDemoInjecting(false); }
   };
 
-  const getScoreBarColor = (score) => {
-    if (score <= 30) return theme.safe;
-    if (score <= 69) return theme.warning;
-    return theme.danger;
+  // ── District splits ─────────────────────────────────────────────────────────
+  const flashZones  = levels.filter(i => URBAN_SET.has(i.district));
+  const riverZones  = levels.filter(i => !URBAN_SET.has(i.district));
+  const flashAlerts = flashZones.filter(i => i.status !== "SAFE").length;
+  const riverAlerts = riverZones.filter(i => i.status !== "SAFE").length;
+
+  // User's area reading
+  const userAreaData = userDistrict ? levels.find(i => i.district === userDistrict) : null;
+
+  const scrollToTab = (idx) => {
+    hScrollRef.current?.scrollTo({ x: idx * SCREEN_W, animated: true });
+    setActiveTab(idx);
   };
 
-  const reset = () => {
-    setInputText("");
-    setImage(null);
-    setResult(null);
-    setError(null);
-    setCacheKey(null);
-    setReportedByUser(false);
-    setFromScamCache(false);
-  };
-
-  const reportAsScam = async () => {
-    if (!cacheKey || !user) {
-      Alert.alert("Sign in required", "Please sign in to report a scam.");
-      return;
+  // ── Your Area card ──────────────────────────────────────────────────────────
+  const YourAreaSection = () => {
+    if (locationLoading) {
+      return (
+        <View style={styles.yourAreaLoading}>
+          <ActivityIndicator size="small" color={FS.primary} />
+          <Text style={styles.yourAreaLoadingText}>Locating you…</Text>
+        </View>
+      );
     }
-    if (reportedByUser) {
-      Alert.alert("Already reported", "You have already reported this.");
-      return;
+
+    if (locationDenied || !userDistrict) {
+      return (
+        <TouchableOpacity
+          style={styles.yourAreaPrompt}
+          onPress={async () => {
+            setLocationLoading(true);
+            setLocationDenied(false);
+            try {
+              const { status } = await Location.requestForegroundPermissionsAsync();
+              if (status !== "granted") { setLocationDenied(true); return; }
+              const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+              setUserDistrict(nearestDistrict(loc.coords.latitude, loc.coords.longitude));
+            } catch { setLocationDenied(true); }
+            finally { setLocationLoading(false); }
+          }}
+        >
+          <Text style={styles.yourAreaPromptIcon}>📍</Text>
+          <Text style={styles.yourAreaPromptText}>{tf.enableLocation}</Text>
+          <Text style={styles.yourAreaPromptBtn}>{tf.allowLocation} →</Text>
+        </TouchableOpacity>
+      );
     }
-    try {
-      const reportRef = doc(db, "reports", cacheKey);
-      const snap = await getDoc(reportRef);
-      const existing = snap.exists() ? snap.data() : { count: 0, reportedBy: [] };
-      const alreadyReported = Array.isArray(existing.reportedBy) && existing.reportedBy.includes(user.uid);
-      if (alreadyReported) {
-        setReportedByUser(true);
-        Alert.alert("Already reported", "You have already reported this.");
-        return;
-      }
-      await setDoc(reportRef, {
-        input: inputText.trim(),
-        count: (existing.count || 0) + 1,
-        reportedBy: [...(existing.reportedBy || []), user.uid],
-        lastReportedAt: new Date().toISOString(),
-      });
-      setReportedByUser(true);
-      setResult(prev => ({ ...prev, reportCount: (prev.reportCount || 0) + 1 }));
-      Alert.alert("Thank you!", "Your report helps protect other users.");
-    } catch (e) {
-      console.error("Report error:", e);
-      Alert.alert("Report Error", `code: ${e?.code || "none"} | ${e?.message || String(e)}`);
+
+    if (!userAreaData) {
+      return (
+        <View style={styles.yourAreaLoading}>
+          <Text style={styles.yourAreaLoadingText}>📍 {userDistrict} — {tf.fetchingData}</Text>
+        </View>
+      );
     }
-  };
 
-  const shareResult = async () => {
-    if (!result) return;
-    const icon = result.status === "SAFE" ? "✅" : result.status === "SUSPICIOUS" ? "⚠️" : "🚨";
-    const message = `${icon} ${result.status} — Risk Score: ${result.score}/100\n\n${result.reason}\n\nChecked with Scam Detector App`;
-    await Share.share({ message });
-  };
+    const isFlash = URBAN_SET.has(userAreaData.district);
+    const color   = STATUS_COLOR[userAreaData.status] || FS.safe;
+    const icon    = STATUS_ICON[userAreaData.status]  || "🟢";
+    const ds      = getDrainStress(userAreaData.rainfall_rate, userAreaData.forecast_2h || 0, userAreaData.rain_chance_max || 0, tf);
 
-  const canAnalyze = (inputText.trim() || image) && !loading;
-
-  const Wrap = embedded ? View : SafeAreaView;
-
-  return (
-    <Wrap style={styles.container}>
-        <StatusBar barStyle={theme.isDark ? "light-content" : "dark-content"} backgroundColor={theme.background} />
-        {!embedded && <LanguageSelector />}
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-
-          {/* Header */}
-          <LinearGradient
-            colors={theme.isDark ? ["#1e1b4b", "#0f0f0f"] : ["#ede9fe", "#f5f5f5"]}
-            style={styles.header}
-          >
-            {scammerImage
-              ? (
-                <View style={styles.headerIconWrap}>
-                  <Image source={scammerImage} style={styles.headerIcon} resizeMode="contain" />
-                </View>
-              )
-              : <Text style={{ fontSize: 56, marginBottom: 10 }}>🛡️</Text>
-            }
-            <Text style={styles.title}>{t.title}</Text>
-            <Text style={styles.subtitle}>{t.subtitle}</Text>
-          </LinearGradient>
-
-          {/* Input Card */}
-          <View style={styles.inputCard}>
-            {/* Image preview */}
-            {image && (
-              <View style={styles.imagePreviewBox}>
-                <Image source={{ uri: image.uri }} style={styles.imagePreview} resizeMode="cover" />
-                <TouchableOpacity style={styles.removeImage} onPress={() => setImage(null)}>
-                  <Text style={styles.removeImageText}>✕ {t.removeImage}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Text Input */}
-            {!image && (
-              <TextInput
-                style={styles.input}
-                placeholder={t.placeholder}
-                placeholderTextColor={theme.subtext}
-                multiline
-                value={inputText}
-                onChangeText={setInputText}
-              />
-            )}
-
-            {/* Divider */}
-            {!image && <View style={styles.divider} />}
-
-            {/* Image buttons */}
-            {!image && (
-              <View style={styles.imageButtonRow}>
-                <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
-                  <Text style={styles.imageButtonText} numberOfLines={1} adjustsFontSizeToFit>{t.uploadScreenshot}</Text>
-                </TouchableOpacity>
-                <View style={{ width: 1, backgroundColor: theme.border }} />
-                <TouchableOpacity style={styles.imageButton} onPress={takePhoto}>
-                  <Text style={styles.imageButtonText} numberOfLines={1} adjustsFontSizeToFit>{t.takePhoto}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>{/* end inputCard */}
-
-          {/* Analyze / Clear buttons */}
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={[styles.analyzeButtonWrap, !canAnalyze && { opacity: 0.45 }]}
-              onPress={analyze}
-              disabled={!canAnalyze}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={["#818cf8", "#6366f1", "#4f46e5"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.analyzeButton}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.analyzeButtonText}>{t.checkNow}</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {(result || error || image) && (
-              <TouchableOpacity style={styles.resetButton} onPress={reset}>
-                <Text style={styles.resetButtonText}>{t.clear}</Text>
-              </TouchableOpacity>
-            )}
+    return (
+      <TouchableOpacity
+        style={[styles.yourAreaCard, { borderColor: color }]}
+        onPress={() => navigation.navigate("AlertDetail", { reading: userAreaData })}
+        activeOpacity={0.88}
+      >
+        <LinearGradient
+          colors={[color + "28", color + "08"]}
+          style={styles.yourAreaGrad}
+        >
+          <View style={styles.yourAreaTop}>
+            <View style={styles.yourAreaLabelRow}>
+              <Text style={styles.yourAreaPin}>📍</Text>
+              <Text style={styles.yourAreaLabel}>{tf.yourArea}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: color + "33", borderColor: color }]}>
+              <Text style={[styles.statusBadgeText, { color }]}>{icon} {tf[userAreaData.status?.toLowerCase()] || userAreaData.status}</Text>
+            </View>
           </View>
 
-          {slowLoad && (
-            <View style={styles.slowBox}>
-              <ActivityIndicator size="small" color={theme.accent} style={{ marginRight: 8 }} />
-              <Text style={[styles.slowText, { color: theme.subtext }]}>
-                ⏳ Waking up server, please wait…
-              </Text>
-            </View>
-          )}
+          <Text style={styles.yourAreaDistrict}>{userAreaData.district}</Text>
+          <Text style={styles.yourAreaSub}>
+            {isFlash ? `⚡ ${tf.urbanFlashZone}` : `🌊 ${userAreaData.river}`}
+          </Text>
 
-          {/* Error */}
-          {error && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-
-          {/* Result */}
-          {result && (
-            <View style={styles.resultCard}>
-              {/* Gradient status banner */}
-              <LinearGradient
-                colors={
-                  result.status === "SAFE"
-                    ? ["#16a34a", "#22c55e"]
-                    : result.status === "SUSPICIOUS"
-                    ? ["#b45309", "#f59e0b"]
-                    : ["#991b1b", "#ef4444"]
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.statusBanner}
-              >
-                <Text style={styles.statusBannerText}>
-                  {result.status === "SAFE" ? `✅ ${t.safe}` : result.status === "SUSPICIOUS" ? `⚠️ ${t.suspicious}` : `🚨 ${t.scamDetected}`}
-                </Text>
-                <TouchableOpacity onPress={shareResult}>
-                  <Text style={styles.shareButtonText}>⬆ {t.shareResult}</Text>
-                </TouchableOpacity>
-              </LinearGradient>
-
-              {/* Animated score bar */}
-              <View style={styles.scoreSection}>
-                <Text style={styles.scoreLabel}>{t.riskScore}: <Text style={{ color: getScoreBarColor(result.score), fontWeight: "bold" }}>{result.score}/100</Text></Text>
-                <View style={styles.scoreBarBg}>
-                  <Animated.View
-                    style={[
-                      styles.scoreBarFill,
-                      {
-                        width: scoreAnim.interpolate({ inputRange: [0, 100], outputRange: ["0%", "100%"] }),
-                        backgroundColor: getScoreBarColor(result.score),
-                      },
-                    ]}
-                  />
+          <View style={styles.yourAreaMetricRow}>
+            {isFlash ? (
+              <>
+                <View style={styles.yourAreaMetric}>
+                  <Text style={[styles.yourAreaBigNum, { color }]}>{userAreaData.rainfall_rate.toFixed(1)}</Text>
+                  <Text style={styles.yourAreaUnit}>{tf.rainfall}</Text>
                 </View>
+                <View style={[styles.yourAreaDrainBadge, { backgroundColor: ds.color + "33", borderColor: ds.color }]}>
+                  <Text style={[styles.yourAreaDrainText, { color: ds.color }]}>🚿 {ds.label}</Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.yourAreaMetric}>
+                  <Text style={[styles.yourAreaBigNum, { color }]}>{userAreaData.river_level.toFixed(1)}</Text>
+                  <Text style={styles.yourAreaUnit}>m</Text>
+                </View>
+                <View style={styles.yourAreaMetric}>
+                  <Text style={[styles.yourAreaBigNum, { color: FS.subtext, fontSize: 18 }]}>{userAreaData.rainfall_rate.toFixed(1)}</Text>
+                  <Text style={styles.yourAreaUnit}>{tf.rainfall}</Text>
+                </View>
+              </>
+            )}
+            <Text style={[styles.yourAreaHint, { color }]}>{tf.viewDetails}</Text>
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  };
+
+  // ── District card renderer ──────────────────────────────────────────────────
+  const renderCard = (item) => {
+    const isFlash = URBAN_SET.has(item.district);
+    const color   = STATUS_COLOR[item.status] || FS.safe;
+    const icon    = STATUS_ICON[item.status]  || "🟢";
+    const label   = tf[item.status?.toLowerCase()] || item.status;
+    const ds      = getDrainStress(item.rainfall_rate, item.forecast_2h || 0, item.rain_chance_max || 0, tf);
+    const isYours = item.district === userDistrict;
+
+    return (
+      <TouchableOpacity
+        key={item.river}
+        style={[
+          styles.card,
+          { borderLeftColor: color, borderLeftWidth: 4 },
+          isYours && styles.cardHighlighted,
+        ]}
+        onPress={() => navigation.navigate("AlertDetail", { reading: item })}
+        activeOpacity={0.85}
+      >
+        <View style={styles.cardHeader}>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={styles.districtName}>{item.district}</Text>
+              {isYours && <Text style={styles.youBadge}>📍</Text>}
+            </View>
+            <Text style={styles.districtSub}>
+              {isFlash ? `⚡ ${tf.urbanFlashZone}` : `🌊 ${item.river}`}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: color + "22", borderColor: color }]}>
+            <Text style={[styles.statusBadgeText, { color }]}>{icon} {label}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardMetrics}>
+          {isFlash ? (
+            <>
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>🌧</Text>
+                <Text style={styles.metricValue}>{item.rainfall_rate.toFixed(1)}</Text>
+                <Text style={styles.metricLabel}>{tf.rainfall}</Text>
               </View>
-
-              {/* Scam cache indicator */}
-              {fromScamCache && (
-                <View style={[styles.semakMuleResult, { backgroundColor: theme.danger + "22", borderColor: theme.danger, marginBottom: 12 }]}>
-                  <Text style={{ fontSize: 16 }}>⚡</Text>
-                  <Text style={[styles.semakMuleResultText, { color: theme.danger }]}>
-                    Previously confirmed scam — instant result
-                  </Text>
+              <View style={styles.metricDivider} />
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>🚿</Text>
+                <View style={[styles.drainBadge, { backgroundColor: ds.color + "33", borderColor: ds.color }]}>
+                  <Text style={[styles.drainBadgeText, { color: ds.color }]}>{ds.label}</Text>
                 </View>
-              )}
+                <Text style={styles.metricLabel}>{tf.drainStress}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>⛅</Text>
+                <Text style={[styles.metricValue, { fontSize: 9 }]} numberOfLines={2}>
+                  {item.condition || "Clear"}
+                </Text>
+                <Text style={styles.metricLabel}>WeatherAPI</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>🌊</Text>
+                <Text style={styles.metricValue}>{item.river_level.toFixed(1)}m</Text>
+                <Text style={styles.metricLabel}>{tf.riverLevel}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>🌧</Text>
+                <Text style={styles.metricValue}>{item.rainfall_rate.toFixed(1)}</Text>
+                <Text style={styles.metricLabel}>{tf.rainfall}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metric}>
+                <Text style={styles.metricIcon}>📡</Text>
+                <Text style={[styles.metricValue, { fontSize: 10 }]} numberOfLines={1}>{item.station}</Text>
+                <Text style={styles.metricLabel}>{tf.jpsMonitor}</Text>
+              </View>
+            </>
+          )}
+        </View>
 
-              {/* Community reports warning */}
-              {result.reportCount > 0 && (
-                <View style={[styles.semakMuleResult, {
-                  backgroundColor: result.reportCount >= 5 ? theme.danger + "33" : theme.warning + "22",
-                  borderColor: result.reportCount >= 5 ? theme.danger : theme.warning,
-                  marginBottom: 12,
-                }]}>
-                  <Text style={{ fontSize: 16 }}>{result.reportCount >= 5 ? "🚨" : "⚠️"}</Text>
-                  <Text style={[styles.semakMuleResultText, { color: result.reportCount >= 5 ? theme.danger : theme.warning }]}>
-                    {result.reportCount >= 5
-                      ? `${result.reportCount} users flagged this as a scam — high risk`
-                      : `${result.reportCount} user${result.reportCount !== 1 ? "s" : ""} reported this as suspicious`}
-                  </Text>
-                </View>
-              )}
+        {isFlash ? (
+          <>
+            <View style={styles.levelBarBg}>
+              <View style={[styles.levelBarFill, { width: `${Math.min((item.rainfall_rate / 60) * 100, 100)}%`, backgroundColor: color }]} />
+            </View>
+            <View style={styles.levelBarLabels}>
+              <Text style={styles.levelBarLabel}>0mm/hr</Text>
+              <Text style={styles.levelBarLabel}>{tf.watch15}</Text>
+              <Text style={styles.levelBarLabel}>{tf.danger50}</Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.levelBarBg}>
+              <View style={[styles.levelBarFill, { width: `${Math.min((item.river_level / 6.5) * 100, 100)}%`, backgroundColor: color }]} />
+            </View>
+            <View style={styles.levelBarLabels}>
+              <Text style={styles.levelBarLabel}>0m</Text>
+              <Text style={styles.levelBarLabel}>{tf.watch3m}</Text>
+              <Text style={styles.levelBarLabel}>{tf.danger55m}</Text>
+            </View>
+          </>
+        )}
 
-              {/* Reason */}
-              <Text style={styles.reasonLabel}>{t.whatWeFound}</Text>
-              {result.findings && result.findings.length > 0 ? (
-                <View style={styles.findingsList}>
-                  {result.findings.map((f, i) => (
-                    <View key={i} style={styles.findingRow}>
-                      <Text style={styles.findingBullet}>•</Text>
-                      <Text style={styles.findingText}>{f}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text style={styles.reasonText}>{result.reason}</Text>
-              )}
-
-              {/* URL scan result */}
-              {result.url_scanned && (
-                <View style={styles.detailBox}>
-                  <Text style={styles.detailLabel}>{t.linkChecked}</Text>
-                  <Text style={styles.detailValue}>{result.url_scanned}</Text>
-                  <Text style={[styles.detailStatus, { color: result.url_flagged ? theme.danger : theme.safe }]}>
-                    {result.url_flagged ? `🚨 ${t.flaggedVT}` : `✅ ${t.safeVT}`}
-                  </Text>
-                  {result.dataset_label && (
-                    <Text style={[styles.detailStatus, { color: theme.danger }]}>
-                      🗄️ {`Matched ${result.dataset_label} in threat database`}
-                    </Text>
-                  )}
-                </View>
-              )}
-
-              {/* IP scan result */}
-              {result.ip_scanned && (
-                <View style={[styles.detailBox, { marginTop: 10 }]}>
-                  <Text style={styles.detailLabel}>{t.ipChecked}</Text>
-                  <Text style={styles.detailValue}>{result.ip_scanned}</Text>
-                  <Text style={[styles.detailStatus, { color: result.ip_flagged ? theme.danger : theme.safe }]}>
-                    {result.ip_flagged ? `🚨 ${t.flaggedVT}` : `✅ ${t.safeVT}`}
-                  </Text>
-                </View>
-              )}
-
-              {/* Phone result */}
-              {result.phone_scanned && (
-                <View style={[styles.detailBox, { marginTop: 10 }]}>
-                  <Text style={styles.detailLabel}>{t.phoneChecked}</Text>
-                  <Text style={styles.detailValue}>
-                    {result.phone_international || result.phone_scanned}
-                  </Text>
-
-                  {result.phone_valid ? (
-                    <View style={styles.phoneDetailGrid}>
-                      {result.phone_country ? (
-                        <View style={styles.phoneDetailRow}>
-                          <Text style={styles.phoneDetailIcon}>🌍</Text>
-                          <Text style={styles.phoneDetailKey}>{t.phoneCountry || "Country"}</Text>
-                          <Text style={styles.phoneDetailVal}>
-                            {result.phone_country}{result.phone_country_code ? ` (${result.phone_country_code})` : ""}
-                          </Text>
-                        </View>
-                      ) : null}
-                      {result.phone_location ? (
-                        <View style={styles.phoneDetailRow}>
-                          <Text style={styles.phoneDetailIcon}>📍</Text>
-                          <Text style={styles.phoneDetailKey}>{t.phoneRegion || "Region"}</Text>
-                          <Text style={styles.phoneDetailVal}>{result.phone_location}</Text>
-                        </View>
-                      ) : null}
-                      {result.phone_carrier ? (
-                        <View style={styles.phoneDetailRow}>
-                          <Text style={styles.phoneDetailIcon}>📡</Text>
-                          <Text style={styles.phoneDetailKey}>{t.phoneCarrier || "Carrier"}</Text>
-                          <Text style={styles.phoneDetailVal}>{result.phone_carrier}</Text>
-                        </View>
-                      ) : null}
-                      {result.phone_line_type ? (
-                        <View style={styles.phoneDetailRow}>
-                          <Text style={styles.phoneDetailIcon}>📱</Text>
-                          <Text style={styles.phoneDetailKey}>{t.phoneType || "Type"}</Text>
-                          <Text style={[styles.phoneDetailVal, { textTransform: "capitalize" }]}>{result.phone_line_type}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : (
-                    <Text style={[styles.detailStatus, { color: theme.danger }]}>
-                      ❌ {t.invalidPhone}
-                    </Text>
-                  )}
-
-                  {result.semak_mule_found != null && (
-                    <View style={[styles.semakMuleResult, {
-                      backgroundColor: result.semak_mule_found ? theme.danger + "22" : theme.safe + "22",
-                      borderColor: result.semak_mule_found ? theme.danger : theme.safe,
-                    }]}>
-                      <Text style={{ fontSize: 16 }}>{result.semak_mule_found ? "🚨" : "✅"}</Text>
-                      <Text style={[styles.semakMuleResultText, { color: result.semak_mule_found ? theme.danger : theme.safe }]}>
-                        {result.semak_mule_found
-                          ? `${result.semak_mule_reports} scam report(s) on PDRM Semak Mule`
-                          : "No reports on PDRM Semak Mule"}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-
-              {/* Social media result */}
-              {result.social_handle && (
-                <View style={[styles.detailBox, { marginTop: 10 }]}>
-                  <Text style={styles.detailLabel}>
-                    {result.social_platform && result.social_platform !== "Unknown"
-                      ? `${result.social_platform} Account`
-                      : "Social Media Account"}
-                  </Text>
-                  <Text style={styles.detailValue}>@{result.social_handle}</Text>
-                  {result.social_found_reports != null && (
-                    <View style={[styles.semakMuleResult, {
-                      backgroundColor: result.social_found_reports ? theme.danger + "22" : theme.safe + "22",
-                      borderColor: result.social_found_reports ? theme.danger : theme.safe,
-                    }]}>
-                      <Text style={{ fontSize: 16 }}>{result.social_found_reports ? "🚨" : "✅"}</Text>
-                      <Text style={[styles.semakMuleResultText, {
-                        color: result.social_found_reports ? theme.danger : theme.safe,
-                      }]}>
-                        {result.social_found_reports
-                          ? `Found in ${result.social_report_count} scam-related result(s) online`
-                          : "No scam reports found online"}
-                      </Text>
-                    </View>
-                  )}
-                  {result.social_snippets && result.social_snippets.map((s, i) => (
-                    <Text key={i} style={[styles.detailLabel, { marginTop: 6, color: theme.danger }]} numberOfLines={2}>• {s}</Text>
-                  ))}
-                </View>
-              )}
-
-              {/* Email result */}
-              {result.email_scanned && (
-                <View style={[styles.detailBox, { marginTop: 10 }]}>
-                  <Text style={styles.detailLabel}>📧 Email Checked</Text>
-                  <Text style={styles.detailValue}>{result.email_scanned}</Text>
-                  {result.email_semak_found != null && (
-                    <View style={[styles.semakMuleResult, {
-                      backgroundColor: result.email_semak_found ? theme.danger + "22" : theme.safe + "22",
-                      borderColor: result.email_semak_found ? theme.danger : theme.safe,
-                    }]}>
-                      <Text style={{ fontSize: 16 }}>{result.email_semak_found ? "🚨" : "✅"}</Text>
-                      <Text style={[styles.semakMuleResultText, { color: result.email_semak_found ? theme.danger : theme.safe }]}>
-                        {result.email_semak_found
-                          ? `${result.email_semak_reports} scam report(s) on PDRM Semak Mule`
-                          : "No reports on PDRM Semak Mule"}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Report as Scam button — text inputs only */}
-              {!image && inputText.trim() && (
-                <TouchableOpacity
-                  style={[styles.reportButton, reportedByUser && { opacity: 0.5 }]}
-                  onPress={reportAsScam}
-                  disabled={reportedByUser}
-                >
-                  <Text style={styles.reportButtonText}>
-                    {reportedByUser ? "✓ Reported" : "🚨 Report as Scam"}
-                  </Text>
-                </TouchableOpacity>
+        {(() => {
+          const peak = Math.max(item.forecast_1h || 0, item.forecast_2h || 0);
+          const trend = item.trend;
+          if (!peak && !trend) return null;
+          const trendColor = trend === "rising" ? "#F59E0B" : trend === "easing" ? "#16A34A" : "#64748B";
+          const trendIcon  = trend === "rising" ? "⬆" : trend === "easing" ? "⬇" : "→";
+          const trendLabel = trend === "rising"
+            ? `Rain building — ${peak.toFixed(1)}mm expected next 2h`
+            : trend === "easing"
+            ? "Rain easing off"
+            : peak > 0 ? `${peak.toFixed(1)}mm forecast next 2h` : "Stable conditions";
+          return (
+            <View style={[styles.forecastRow, { borderColor: trendColor + "55" }]}>
+              <Text style={[styles.forecastIcon, { color: trendColor }]}>{trendIcon}</Text>
+              <Text style={[styles.forecastText, { color: trendColor }]}>{trendLabel}</Text>
+              {(item.rain_chance_max || 0) > 0 && (
+                <Text style={[styles.forecastChance, { color: trendColor }]}>{item.rain_chance_max}% chance</Text>
               )}
             </View>
+          );
+        })()}
+
+        {(item.status === "WARNING" || item.status === "DANGER") && (
+          <TouchableOpacity
+            style={[styles.evacuateBtn, { backgroundColor: color + "22", borderColor: color }]}
+            onPress={() => navigation.navigate("Evacuation", { district: item.district, risk: item.status })}
+          >
+            <Text style={[styles.evacuateBtnText, { color }]}>🏃 {tf.findEvacuation}</Text>
+          </TouchableOpacity>
+        )}
+        <Text style={styles.tapHint}>{tf.viewAiAnalysis}</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // ── Flash flood legend (rainfall-based) ────────────────────────────────────
+  const FlashLegend = () => (
+    <View style={styles.legend}>
+      <Text style={styles.legendTitle}>{tf.rainfallThresholds}</Text>
+      <View style={styles.legendRow}>
+        {[
+          [tf.safe,    "< 15mm/hr",  FS.safe],
+          [tf.watch,   "15–30mm/hr", FS.watch],
+          [tf.warning, "30–50mm/hr", FS.warning],
+          [tf.danger,  "> 50mm/hr",  FS.danger],
+        ].map(([label, range, color]) => (
+          <View key={label} style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: color }]} />
+            <Text style={styles.legendLabel}>{label}</Text>
+            <Text style={styles.legendRange}>{range}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+
+  // ── River overflow legend (JPS level-based) ─────────────────────────────────
+  const RiverLegend = () => (
+    <View style={styles.legend}>
+      <Text style={styles.legendTitle}>{tf.jpsThresholds}</Text>
+      <View style={styles.legendRow}>
+        {[
+          [tf.safe,    "< 3.0m",   FS.safe],
+          [tf.watch,   "3–4.5m",   FS.watch],
+          [tf.warning, "4.5–5.5m", FS.warning],
+          [tf.danger,  "> 5.5m",   FS.danger],
+        ].map(([label, range, color]) => (
+          <View key={label} style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: color }]} />
+            <Text style={styles.legendLabel}>{label}</Text>
+            <Text style={styles.legendRange}>{range}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  return (
+    <LinearGradient colors={["#0A1628", "#112240", "#0D1F38"]} style={{ flex: 1 }}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={FS.bg} />
+
+        {/* Alert banner */}
+        {(showBanner || bannerAnim._value > 0) && (
+          <Animated.View style={[
+            styles.alertBanner,
+            { borderColor: worstColor, backgroundColor: worstColor + "22" },
+            { opacity: bannerAnim, transform: [{ translateY: bannerAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 0] }) }] },
+          ]}>
+            <View style={styles.bannerLeft}>
+              <Text style={styles.bannerIcon}>{worstIcon}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.bannerTitle, { color: worstColor }]}>{overallRisk} {tf.detected}</Text>
+                <Text style={styles.bannerSub}>
+                  {worstDistrict ? `${worstDistrict.district} — ${tf.aiReady}` : tf.anomalyFlagged}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.bannerActions}>
+              <TouchableOpacity style={[styles.bannerBtn, { backgroundColor: worstColor }]} onPress={() => { setBannerDismissed(true); if (worstDistrict) navigation.navigate("AlertDetail", { reading: worstDistrict }); }}>
+                <Text style={styles.bannerBtnText}>{tf.viewBtn}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setBannerDismissed(true)} style={styles.dismissBtn}>
+                <Text style={styles.dismissText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.appName}>💧 {tf.appTitle}</Text>
+            <Text style={styles.appSub}>{tf.appSub}</Text>
+          </View>
+          {/* Language toggle */}
+          <View style={styles.langRow}>
+            {LANG_PILLS.map(l => (
+              <TouchableOpacity
+                key={l.code}
+                style={[styles.langBtn, lang === l.code && styles.langBtnActive]}
+                onPress={() => changeLang(l.code)}
+              >
+                <Text style={[styles.langText, lang === l.code && styles.langTextActive]}>{l.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Subheader */}
+        <View style={styles.subHeader}>
+          <View style={[styles.overallBadge, { backgroundColor: worstColor + "22", borderColor: worstColor }]}>
+            <Text style={[styles.overallBadgeText, { color: worstColor }]}>{worstIcon} {tf[overallRisk?.toLowerCase()] || overallRisk}</Text>
+          </View>
+          {lastUpdated && (
+            <Text style={styles.updateTime}>{tf.updated} {formatTime(lastUpdated)} · {tf.autoRefresh}</Text>
           )}
-        </ScrollView>
-    </Wrap>
+          <TouchableOpacity style={[styles.demoBtn, demoInjecting && { opacity: 0.6 }]} onPress={handleDemoInject} disabled={demoInjecting}>
+            {demoInjecting ? <ActivityIndicator size="small" color={FS.warning} /> : <Text style={styles.demoBtnText}>⚡ {tf.demo}</Text>}
+          </TouchableOpacity>
+        </View>
+
+        {/* Loading */}
+        {loading && (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={FS.primary} />
+            <Text style={styles.loadingText}>{tf.fetchingData}</Text>
+          </View>
+        )}
+
+        {/* Error */}
+        {!loading && error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={fetchLevels}>
+              <Text style={styles.retryText}>{tf.retry}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!loading && !error && (
+          <>
+            {/* Your Area */}
+            <View style={styles.yourAreaWrap}>
+              <YourAreaSection />
+            </View>
+
+            {/* Tab bar */}
+            <View style={styles.tabBar}>
+              <TouchableOpacity style={[styles.tabBtn, activeTab === 0 && styles.tabBtnActive]} onPress={() => scrollToTab(0)} activeOpacity={0.8}>
+                <Text style={[styles.tabLabel, activeTab === 0 && styles.tabLabelActive]}>⚡ {tf.flashFloodZones}</Text>
+                {flashAlerts > 0
+                  ? <View style={[styles.tabBadge, { backgroundColor: FS.danger }]}><Text style={styles.tabBadgeText}>{flashAlerts}</Text></View>
+                  : <Text style={styles.tabClear}>{tf.allClear}</Text>}
+              </TouchableOpacity>
+              <View style={styles.tabSep} />
+              <TouchableOpacity style={[styles.tabBtn, activeTab === 1 && styles.tabBtnActive]} onPress={() => scrollToTab(1)} activeOpacity={0.8}>
+                <Text style={[styles.tabLabel, activeTab === 1 && styles.tabLabelActive]}>🌊 {tf.riverOverflowZones}</Text>
+                {riverAlerts > 0
+                  ? <View style={[styles.tabBadge, { backgroundColor: FS.primary }]}><Text style={styles.tabBadgeText}>{riverAlerts}</Text></View>
+                  : <Text style={styles.tabClear}>{tf.allClear}</Text>}
+              </TouchableOpacity>
+            </View>
+
+            {/* Dot indicators */}
+            <View style={styles.dotsRow}>
+              {[0, 1].map(i => <View key={i} style={[styles.dot, activeTab === i && styles.dotActive]} />)}
+            </View>
+
+            {/* Horizontal pager */}
+            <ScrollView
+              ref={hScrollRef}
+              horizontal pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onMomentumScrollEnd={e => setActiveTab(Math.round(e.nativeEvent.contentOffset.x / SCREEN_W))}
+              style={{ flex: 1 }}
+            >
+              {/* Page 0 — Flash Flood */}
+              <ScrollView style={{ width: SCREEN_W }} contentContainerStyle={styles.pageScroll} showsVerticalScrollIndicator={false}>
+                {flashZones.length === 0
+                  ? <View style={styles.emptyPage}><Text style={styles.emptyIcon}>⚡</Text><Text style={styles.emptyText}>{tf.flashFloodZones}</Text></View>
+                  : flashZones.map(renderCard)}
+                <FlashLegend />
+                <View style={{ height: 110 }} />
+              </ScrollView>
+
+              {/* Page 1 — River Overflow */}
+              <ScrollView style={{ width: SCREEN_W }} contentContainerStyle={styles.pageScroll} showsVerticalScrollIndicator={false}>
+                {riverZones.length === 0
+                  ? <View style={styles.emptyPage}><Text style={styles.emptyIcon}>🌊</Text><Text style={styles.emptyText}>{tf.riverOverflowZones}</Text></View>
+                  : riverZones.map(renderCard)}
+                <RiverLegend />
+                <View style={{ height: 110 }} />
+              </ScrollView>
+            </ScrollView>
+          </>
+        )}
+
+        {/* Floating SOS */}
+        <TouchableOpacity style={styles.sosBtn} onPress={() => navigation.navigate("Rescue")} activeOpacity={0.85}>
+          <Text style={styles.sosBtnIcon}>🆘</Text>
+          <Text style={styles.sosBtnText}>{tf.sos}</Text>
+        </TouchableOpacity>
+
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
-const makeStyles = (theme) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "transparent",
+// ── Styles ────────────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+
+  alertBanner: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginHorizontal: 12, marginTop: 6, marginBottom: 4,
+    borderRadius: 12, borderWidth: 1.5, padding: 12, elevation: 6,
   },
-  scroll: {
-    padding: 20,
-    paddingBottom: 110,
-  },
+  bannerLeft:    { flexDirection: "row", alignItems: "center", flex: 1, gap: 10 },
+  bannerIcon:    { fontSize: 26 },
+  bannerTitle:   { fontSize: 13, fontWeight: "900", letterSpacing: 0.5 },
+  bannerSub:     { fontSize: 11, color: FS.subtext, marginTop: 2 },
+  bannerActions: { flexDirection: "row", alignItems: "center", gap: 8, marginLeft: 8 },
+  bannerBtn:     { borderRadius: 7, paddingHorizontal: 12, paddingVertical: 6 },
+  bannerBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  dismissBtn:    { padding: 4 },
+  dismissText:   { color: FS.subtext, fontSize: 16, fontWeight: "600" },
+
   header: {
-    alignItems: "center",
-    paddingTop: 28,
-    paddingBottom: 28,
-    paddingHorizontal: 20,
-    marginHorizontal: -20,
-    marginBottom: 20,
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, gap: 8,
   },
-  headerIconWrap: {
-    backgroundColor: theme.surface,
-    borderRadius: 20,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
-    overflow: "hidden",
+  appName: { fontSize: 22, fontWeight: "900", color: FS.text, letterSpacing: -0.5 },
+  appSub:  { fontSize: 11, color: FS.subtext, marginTop: 1 },
+
+  langRow: { flexDirection: "row", gap: 4 },
+  langBtn: {
+    paddingHorizontal: 7, paddingVertical: 4, borderRadius: 7,
+    borderWidth: 1, borderColor: FS.border, backgroundColor: FS.surface,
   },
-  headerIcon: {
-    width: 64,
-    height: 64,
+  langBtnActive:  { borderColor: FS.primary, backgroundColor: FS.primary + "33" },
+  langText:       { fontSize: 10, color: FS.subtext, fontWeight: "700" },
+  langTextActive: { color: FS.primary, fontWeight: "900" },
+
+  subHeader: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingBottom: 8, gap: 8,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: theme.text,
-    marginBottom: 6,
-    letterSpacing: -0.5,
+  overallBadge:     { borderWidth: 1.5, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4 },
+  overallBadgeText: { fontSize: 12, fontWeight: "800" },
+  updateTime: { flex: 1, fontSize: 10, color: FS.subtext },
+  demoBtn: {
+    borderWidth: 1, borderColor: FS.warning + "88", borderRadius: 7,
+    paddingHorizontal: 10, paddingVertical: 4, minWidth: 60, alignItems: "center",
   },
-  subtitle: {
-    fontSize: 13,
-    color: theme.subtext,
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: 10,
-  },
-  inputCard: {
-    backgroundColor: theme.surface,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: theme.border,
-    marginBottom: 14,
-    overflow: "hidden",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.border,
-    marginHorizontal: 0,
-  },
-  imagePreviewBox: {
-    alignItems: "center",
-    padding: 16,
-  },
-  imagePreview: {
-    width: 160,
-    height: 160,
-    borderRadius: 12,
-  },
-  removeImage: {
-    padding: 10,
-    alignItems: "center",
-  },
-  removeImageText: {
-    color: theme.danger,
-    fontSize: 13,
-  },
-  input: {
-    backgroundColor: "transparent",
-    padding: 18,
-    color: theme.text,
-    fontSize: 15,
-    minHeight: 130,
-    textAlignVertical: "top",
-  },
-  imageButtonRow: {
-    flexDirection: "row",
-  },
-  imageButton: {
-    flex: 1,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderTopWidth: 0,
-  },
-  imageButtonText: {
-    color: theme.accent,
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 20,
-  },
-  analyzeButtonWrap: {
-    flex: 1,
-    borderRadius: 14,
-    overflow: "hidden",
-    elevation: 4,
-    shadowColor: "#6366f1",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-  },
-  analyzeButton: {
-    paddingVertical: 15,
-    alignItems: "center",
-    borderRadius: 14,
-  },
-  analyzeButtonText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-    letterSpacing: 0.5,
-  },
-  slowBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 4,
-    marginBottom: 12,
-  },
-  slowText: {
-    fontSize: 13,
-    flex: 1,
-  },
-  statusBanner: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 16,
-  },
-  statusBannerText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  shareButtonText: {
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  scoreSection: {
-    marginBottom: 16,
-  },
-  resetButton: {
-    backgroundColor: theme.surface,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  resetButtonText: {
-    color: theme.subtext,
-    fontSize: 15,
-  },
+  demoBtnText: { color: FS.warning, fontSize: 11, fontWeight: "700" },
+
+  center:      { flex: 1, alignItems: "center", justifyContent: "center" },
+  loadingText: { color: FS.subtext, marginTop: 12, fontSize: 14 },
   errorBox: {
-    backgroundColor: theme.danger + "22",
-    borderColor: theme.danger,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
+    margin: 16, backgroundColor: FS.danger + "22", borderColor: FS.danger,
+    borderWidth: 1, borderRadius: 12, padding: 16, alignItems: "center",
   },
-  errorText: {
-    color: theme.danger,
-    fontSize: 14,
+  errorText: { color: FS.danger, fontSize: 14, textAlign: "center", marginBottom: 12 },
+  retryBtn:  { backgroundColor: FS.danger, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 8 },
+  retryText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+
+  // Your Area
+  yourAreaWrap: { paddingHorizontal: 16, marginBottom: 8 },
+  yourAreaCard: {
+    borderRadius: 16, borderWidth: 1.5, overflow: "hidden",
+    elevation: 6, shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
   },
-  resultCard: {
-    backgroundColor: theme.surface,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: theme.border,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
+  yourAreaGrad:      { padding: 14 },
+  yourAreaTop:       { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  yourAreaLabelRow:  { flexDirection: "row", alignItems: "center", gap: 4 },
+  yourAreaPin:       { fontSize: 14 },
+  yourAreaLabel:     { fontSize: 11, fontWeight: "800", color: FS.subtext, letterSpacing: 0.5 },
+  yourAreaDistrict:  { fontSize: 22, fontWeight: "900", color: FS.text, marginBottom: 2 },
+  yourAreaSub:       { fontSize: 11, color: FS.subtext, marginBottom: 10 },
+  yourAreaMetricRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  yourAreaMetric:    { flexDirection: "row", alignItems: "baseline", gap: 4 },
+  yourAreaBigNum:    { fontSize: 28, fontWeight: "900" },
+  yourAreaUnit:      { fontSize: 12, color: FS.subtext, fontWeight: "600" },
+  yourAreaDrainBadge:{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  yourAreaDrainText: { fontSize: 12, fontWeight: "900" },
+  yourAreaHint:      { marginLeft: "auto", fontSize: 11, fontWeight: "700" },
+
+  yourAreaLoading: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: FS.surface, borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: FS.border,
   },
-  statusBadge: {
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+  yourAreaLoadingText: { color: FS.subtext, fontSize: 12 },
+
+  yourAreaPrompt: {
+    backgroundColor: FS.surface, borderRadius: 12, borderWidth: 1,
+    borderColor: FS.primary + "55", borderStyle: "dashed",
+    padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
   },
-  statusText: {
-    fontWeight: "bold",
-    fontSize: 16,
+  yourAreaPromptIcon: { fontSize: 20 },
+  yourAreaPromptText: { flex: 1, fontSize: 12, color: FS.subtext },
+  yourAreaPromptBtn:  { fontSize: 12, color: FS.primary, fontWeight: "800" },
+
+  // Tab bar
+  tabBar: {
+    flexDirection: "row", marginHorizontal: 16, marginBottom: 4,
+    backgroundColor: FS.surface, borderRadius: 14, borderWidth: 1, borderColor: FS.border, overflow: "hidden",
   },
-  scoreLabel: {
-    color: theme.subtext,
-    fontSize: 13,
-    marginBottom: 8,
+  tabBtn:       { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 9, paddingHorizontal: 6, gap: 5 },
+  tabBtnActive: { backgroundColor: FS.card },
+  tabLabel:     { fontSize: 11, fontWeight: "700", color: FS.subtext },
+  tabLabelActive: { color: FS.text, fontWeight: "900" },
+  tabBadge:     { borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1, minWidth: 18, alignItems: "center" },
+  tabBadgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
+  tabClear:     { fontSize: 10, color: FS.safe, fontWeight: "700" },
+  tabSep:       { width: 1, backgroundColor: FS.border, marginVertical: 8 },
+
+  dotsRow: { flexDirection: "row", justifyContent: "center", gap: 6, marginBottom: 8 },
+  dot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: FS.border },
+  dotActive: { backgroundColor: FS.primary, width: 18 },
+
+  // Pages
+  pageScroll: { padding: 14, paddingTop: 6 },
+  emptyPage:  { alignItems: "center", paddingVertical: 60 },
+  emptyIcon:  { fontSize: 40, marginBottom: 12 },
+  emptyText:  { color: FS.subtext, fontSize: 14 },
+
+  // Card
+  card: {
+    backgroundColor: FS.card, borderRadius: 16, padding: 14, marginBottom: 12,
+    borderWidth: 1, borderColor: FS.border, elevation: 4,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6,
   },
-  scoreBarBg: {
-    backgroundColor: theme.border,
-    borderRadius: 999,
-    height: 12,
-    marginBottom: 20,
-    overflow: "hidden",
+  cardHighlighted: { borderColor: FS.primary + "88", borderWidth: 1.5 },
+  cardHeader:      { flexDirection: "row", alignItems: "flex-start", marginBottom: 12 },
+  districtName:    { fontSize: 17, fontWeight: "800", color: FS.text },
+  districtSub:     { fontSize: 10, color: FS.subtext, marginTop: 3 },
+  youBadge:        { fontSize: 14 },
+  statusBadge:     { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 3 },
+  statusBadgeText: { fontSize: 11, fontWeight: "800" },
+
+  cardMetrics:    { flexDirection: "row", backgroundColor: FS.surface, borderRadius: 10, padding: 10, marginBottom: 10 },
+  metric:         { flex: 1, alignItems: "center" },
+  metricIcon:     { fontSize: 16, marginBottom: 4 },
+  metricValue:    { fontSize: 15, fontWeight: "700", color: FS.text },
+  metricLabel:    { fontSize: 9, color: FS.subtext, marginTop: 2 },
+  metricDivider:  { width: 1, backgroundColor: FS.border, marginVertical: 4 },
+  drainBadge:     { borderWidth: 1, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginBottom: 2 },
+  drainBadgeText: { fontSize: 9, fontWeight: "900" },
+
+  levelBarBg:     { height: 5, backgroundColor: FS.border, borderRadius: 999, overflow: "hidden", marginBottom: 4 },
+  levelBarFill:   { height: "100%", borderRadius: 999 },
+  levelBarLabels: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+  levelBarLabel:  { fontSize: 8, color: FS.subtext },
+
+  evacuateBtn:     { borderWidth: 1, borderRadius: 8, paddingVertical: 7, alignItems: "center", marginBottom: 6 },
+  evacuateBtnText: { fontSize: 11, fontWeight: "800" },
+  tapHint:         { fontSize: 10, color: FS.primary, textAlign: "right", fontWeight: "600" },
+  forecastRow:     { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 6, gap: 4 },
+  forecastIcon:    { fontSize: 11, fontWeight: "700" },
+  forecastText:    { fontSize: 10, fontWeight: "600", flex: 1 },
+  forecastChance:  { fontSize: 10, fontWeight: "600" },
+
+  legend: {
+    backgroundColor: FS.card, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: FS.border, marginTop: 4,
   },
-  scoreBarFill: {
-    height: "100%",
-    borderRadius: 999,
+  legendTitle: { fontSize: 11, color: FS.subtext, fontWeight: "700", marginBottom: 8 },
+  legendRow:   { flexDirection: "row", justifyContent: "space-between" },
+  legendItem:  { alignItems: "center", flex: 1 },
+  legendDot:   { width: 9, height: 9, borderRadius: 5, marginBottom: 4 },
+  legendLabel: { fontSize: 9, color: FS.text, fontWeight: "700" },
+  legendRange: { fontSize: 8, color: FS.subtext, marginTop: 2 },
+
+  sosBtn: {
+    position: "absolute", bottom: 96, right: 20,
+    width: 64, height: 64, borderRadius: 32, backgroundColor: "#DC2626",
+    alignItems: "center", justifyContent: "center", elevation: 10,
+    shadowColor: "#DC2626", shadowOpacity: 0.55, shadowRadius: 14, shadowOffset: { width: 0, height: 5 },
   },
-  reasonLabel: {
-    color: theme.subtext,
-    fontSize: 13,
-    marginBottom: 6,
-  },
-  reasonText: {
-    color: theme.text,
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 16,
-  },
-  findingsList: {
-    marginBottom: 16,
-  },
-  findingRow: {
-    flexDirection: "row",
-    marginBottom: 6,
-  },
-  findingBullet: {
-    color: theme.accent,
-    fontSize: 15,
-    marginRight: 8,
-    lineHeight: 22,
-  },
-  findingText: {
-    color: theme.text,
-    fontSize: 14,
-    lineHeight: 22,
-    flex: 1,
-  },
-  detailBox: {
-    backgroundColor: theme.background,
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  detailLabel: {
-    color: theme.subtext,
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  detailValue: {
-    color: theme.accent,
-    fontSize: 13,
-    marginBottom: 6,
-  },
-  detailStatus: {
-    fontSize: 13,
-    fontWeight: "bold",
-  },
-  phoneDetailGrid: {
-    marginTop: 10,
-    gap: 6,
-  },
-  phoneDetailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    backgroundColor: theme.background,
-    borderRadius: 6,
-  },
-  phoneDetailIcon: {
-    fontSize: 14,
-    width: 22,
-  },
-  phoneDetailKey: {
-    color: theme.subtext,
-    fontSize: 12,
-    fontWeight: "600",
-    width: 60,
-  },
-  phoneDetailVal: {
-    color: theme.text,
-    fontSize: 13,
-    fontWeight: "500",
-    flex: 1,
-  },
-  semakMuleResult: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  semakMuleResultText: {
-    fontSize: 13,
-    fontWeight: "700",
-    flex: 1,
-  },
-  semakMuleButton: {
-    marginTop: 8,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.accent,
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  semakMuleText: {
-    color: theme.accent,
-    fontSize: 13,
-    fontWeight: "bold",
-  },
-  cacheTag: {
-    fontSize: 11,
-    color: theme.accent,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  reportButton: {
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: theme.danger,
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  reportButtonText: {
-    color: theme.danger,
-    fontSize: 13,
-    fontWeight: "bold",
-  },
+  sosBtnIcon: { fontSize: 22, lineHeight: 26 },
+  sosBtnText: { fontSize: 10, fontWeight: "900", color: "#fff", letterSpacing: 1 },
 });

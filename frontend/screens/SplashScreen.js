@@ -1,12 +1,8 @@
 import React, { useEffect } from "react";
-import { View, Text, StyleSheet, Image, StatusBar, Dimensions } from "react-native";
+import { View, Text, StyleSheet, StatusBar, Dimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 
 const { width, height } = Dimensions.get("window");
-
-// Save your knight photo as frontend/assets/wall.jpg
-let knightImage = null;
-try { knightImage = require("../assets/wall.jpg"); } catch {}
 
 export default function SplashScreen({ onDone }) {
   useEffect(() => {
@@ -17,41 +13,65 @@ export default function SplashScreen({ onDone }) {
   return (
     <View style={styles.container}>
       <StatusBar hidden />
-      {knightImage
-        ? <Image source={knightImage} style={styles.image} resizeMode="cover" />
-        : <LinearGradient colors={["#12072a", "#3b1080", "#6d28d9"]} style={styles.image} />
-      }
-      <View style={styles.overlay} />
+      <LinearGradient
+        colors={["#051525", "#0A2540", "#1B6CA8"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.4, y: 1 }}
+        style={styles.gradient}
+      />
+      {/* Decorative water ripple rings */}
+      <View style={[styles.ring, { width: 320, height: 320, borderColor: "rgba(27,108,168,0.3)" }]} />
+      <View style={[styles.ring, { width: 220, height: 220, borderColor: "rgba(27,108,168,0.5)" }]} />
+      <View style={[styles.ring, { width: 130, height: 130, borderColor: "rgba(27,108,168,0.7)" }]} />
       <View style={styles.textWrap}>
-        <Text style={styles.title}>Combat.</Text>
-        <Text style={styles.sub}>Defend yourself from scams</Text>
+        <Text style={styles.droplet}>💧</Text>
+        <Text style={styles.title}>FloodSense</Text>
+        <Text style={styles.sub}>Malaysia Early Warning System</Text>
       </View>
+      <Text style={styles.poweredBy}>Powered by Agentic AI</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  image: { width, height, position: "absolute" },
-  overlay: {
+  container: {
+    flex: 1,
+    backgroundColor: "#051525",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  ring: {
+    position: "absolute",
+    borderRadius: 9999,
+    borderWidth: 1,
   },
   textWrap: {
-    position: "absolute",
-    bottom: 80,
-    left: 32,
+    alignItems: "center",
+  },
+  droplet: {
+    fontSize: 64,
+    marginBottom: 16,
   },
   title: {
     fontSize: 42,
     fontWeight: "900",
-    color: "#fff",
+    color: "#E8F4FD",
     letterSpacing: -1,
+    marginBottom: 8,
   },
   sub: {
     fontSize: 14,
-    color: "rgba(255,255,255,0.65)",
-    marginTop: 4,
+    color: "rgba(232,244,253,0.65)",
     letterSpacing: 0.5,
+  },
+  poweredBy: {
+    position: "absolute",
+    bottom: 48,
+    fontSize: 12,
+    color: "rgba(232,244,253,0.4)",
+    letterSpacing: 1,
   },
 });

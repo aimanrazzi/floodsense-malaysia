@@ -1,17 +1,15 @@
 services:
   - type: web
-    name: scam-detector-api
+    name: floodsense-malaysia
     runtime: python
     buildCommand: pip install --no-cache-dir -r backend/requirements.txt
-    startCommand: cd backend && python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --threads 2
+    startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --threads 2
     envVars:
-      - key: GROQ_API_KEY
+      - key: ANTHROPIC_API_KEY
         sync: false
-      - key: VIRUSTOTAL_API_KEY
+      - key: WEATHERAPI_KEY
         sync: false
-      - key: NUMVERIFY_API_KEY
+      - key: FIREBASE_CREDENTIALS_JSON
         sync: false
-      - key: SERPAPI_KEY
-        sync: false
-      - key: IMGBB_API_KEY
-        sync: false
+      - key: FLASK_DEBUG
+        value: "0"

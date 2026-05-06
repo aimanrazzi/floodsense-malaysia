@@ -1,63 +1,93 @@
-import React, { useState } from "react";
-import { View, ActivityIndicator } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, ActivityIndicator, Platform } from "react-native";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { LanguageProvider } from "./context/LanguageContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { LanguageProvider } from "./context/LanguageContext";
+import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
+import { BACKEND_URL } from "./config";
+import FloodMapScreen    from "./screens/HomeScreen";
+import AlertDetailScreen from "./screens/AlertDetailScreen";
+import EvacuationScreen  from "./screens/EvacuationScreen";
+import RescueScreen      from "./screens/RescueScreen";
+import RescuerScreen     from "./screens/RescuerScreen";
+import LoginScreen       from "./screens/LoginScreen";
+import SplashScreen      from "./screens/SplashScreen";
 
-import MainScreen from "./screens/MainScreen";
-import HistoryScreen from "./screens/HistoryScreen";
-import TipsScreen from "./screens/TipsScreen";
-import ResourcesScreen from "./screens/ResourcesScreen";
-import ReportScreen from "./screens/ReportScreen";
-import AccountScreen from "./screens/AccountScreen";
-import LoginScreen from "./screens/LoginScreen";
-import SplashScreen from "./screens/SplashScreen";
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
-const Tab = createBottomTabNavigator();
+async function registerForPushNotifications() {
+  if (!Device.isDevice) return null;
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let finalStatus = existing;
+  if (existing !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  if (finalStatus !== "granted") return null;
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("flood-alerts", {
+      name: "Flood Alerts",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: "#1B6CA8",
+    });
+  }
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  return token;
+}
+
+const Tab   = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+// FloodSense tab bar colours
+const TAB_ACTIVE   = "#1B6CA8";
+const TAB_INACTIVE = "#4A6F8A";
+const TAB_BG       = "#0A1E35";
 
 const TABS = [
-  { name: "Home",      icon: "shield-checkmark-outline", component: MainScreen,      label: "Check"     },
-  { name: "History",   icon: "time-outline",             component: HistoryScreen,   label: "History"   },
-  { name: "Tips",      icon: "bulb-outline",             component: TipsScreen,      label: "Tips"      },
-  { name: "Resources", icon: "book-outline",             component: ResourcesScreen, label: "Resources" },
-  { name: "Report",    icon: "call-outline",             component: ReportScreen,    label: "Report"    },
+  { name: "FloodMap", icon: "water-outline",       component: FloodMapScreen, label: "Live Map" },
+  { name: "Rescuer",  icon: "people-circle-outline", component: RescuerScreen,  label: "Rescue"   },
 ];
 
 function AppTabs() {
-  const { theme } = useTheme();
   return (
     <Tab.Navigator
-      sceneContainerStyle={{ backgroundColor: theme.background }}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: true,
-        tabBarActiveTintColor: theme.accent,
-        tabBarInactiveTintColor: theme.subtext,
-        tabBarLabelStyle: { fontSize: 10, fontWeight: "600", marginTop: 2 },
+        tabBarActiveTintColor: TAB_ACTIVE,
+        tabBarInactiveTintColor: TAB_INACTIVE,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "700", marginTop: 2 },
         tabBarIcon: ({ color }) => {
-          const tab = TABS.find(t => t.name === route.name);
+          const tab = TABS.find((t) => t.name === route.name);
           return <Ionicons name={tab.icon} size={22} color={color} />;
         },
         tabBarStyle: {
-          backgroundColor: theme.isDark ? "#1a0a3e" : "#ede9fe",
-          borderTopWidth: 0,
-          borderRadius: 32,
+          backgroundColor: TAB_BG,
+          borderTopWidth: 1,
+          borderTopColor: "#1E3A5F",
+          borderRadius: 28,
           marginHorizontal: 12,
           marginBottom: 20,
-          height: 72,
+          height: 68,
           paddingTop: 10,
           paddingBottom: 10,
           position: "absolute",
           elevation: 16,
           shadowColor: "#000",
-          shadowOpacity: 0.5,
+          shadowOpacity: 0.6,
           shadowRadius: 20,
           shadowOffset: { width: 0, height: 8 },
         },
@@ -71,23 +101,31 @@ function AppTabs() {
 }
 
 function AppStack() {
-  const { theme } = useTheme();
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.background },
+        contentStyle: { backgroundColor: "#0A1628" },
       }}
     >
+      {/* Bottom tab root */}
       <Stack.Screen name="Tabs" component={AppTabs} />
+
+      {/* Modal-style stack screens */}
       <Stack.Screen
-        name="Account"
-        component={AccountScreen}
-        options={{
-          animation: "slide_from_right",
-          presentation: "transparentModal",
-          contentStyle: { backgroundColor: theme.background, marginLeft: "14%", borderTopLeftRadius: 24, overflow: "hidden" },
-        }}
+        name="AlertDetail"
+        component={AlertDetailScreen}
+        options={{ animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="Evacuation"
+        component={EvacuationScreen}
+        options={{ animation: "slide_from_bottom" }}
+      />
+      <Stack.Screen
+        name="Rescue"
+        component={RescueScreen}
+        options={{ animation: "slide_from_bottom" }}
       />
     </Stack.Navigator>
   );
@@ -97,10 +135,32 @@ function AppRoot() {
   const { user, loading } = useAuth();
   const { theme } = useTheme();
   const [splashDone, setSplashDone] = useState(false);
+  const notifListener = useRef();
+  const responseListener = useRef();
+
+  useEffect(() => {
+    if (!user) return;
+    registerForPushNotifications().then((token) => {
+      if (!token) return;
+      fetch(`${BACKEND_URL}/api/push/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      }).catch(() => {});
+    });
+
+    notifListener.current = Notifications.addNotificationReceivedListener(() => {});
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(() => {});
+
+    return () => {
+      Notifications.removeNotificationSubscription(notifListener.current);
+      Notifications.removeNotificationSubscription(responseListener.current);
+    };
+  }, [user]);
 
   const navTheme = {
     ...DarkTheme,
-    colors: { ...DarkTheme.colors, background: theme.background, card: theme.background },
+    colors: { ...DarkTheme.colors, background: "#0A1628", card: "#0A1628" },
   };
 
   if (!splashDone) {
@@ -109,8 +169,8 @@ function AppRoot() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: theme.background }}>
-        <ActivityIndicator size="large" color={theme.accent} />
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0A1628" }}>
+        <ActivityIndicator size="large" color="#1B6CA8" />
       </View>
     );
   }
@@ -126,14 +186,14 @@ function AppRoot() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <LanguageProvider>
+    <LanguageProvider>
+      <ThemeProvider>
+        <AuthProvider>
           <SafeAreaProvider>
             <AppRoot />
           </SafeAreaProvider>
-        </LanguageProvider>
-      </AuthProvider>
-    </ThemeProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </LanguageProvider>
   );
 }

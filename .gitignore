@@ -1,12 +1,12 @@
-# Claude Code local settings
+# ── Claude Code ──────────────────────────────────────────────────────────────
 .claude/
 
-# Environment variables - never commit these
+# ── Environment / Secrets ─────────────────────────────────────────────────────
 .env
 .env.*
 !.env.example
 
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -18,20 +18,32 @@ build/
 venv/
 .venv/
 
-# Firebase credentials - never commit these
+# ── ML model & runtime cache (auto-generated on startup) ─────────────────────
+backend/flood_model.pkl
+backend/data/rainfall_cache.json
+
+# ── Firebase / Google credentials ─────────────────────────────────────────────
 GoogleService-Info.plist
+google-services.json
 *firebase-adminsdk*.json
 *serviceAccount*.json
 
-# Node / React Native
+# ── Node / React Native / Expo ────────────────────────────────────────────────
 node_modules/
 .expo/
 dist/
 web-build/
 npm-debug.*
+
+# ── OS & editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+*.orig.*
+
+# ── Build artifacts / signing keys ───────────────────────────────────────────
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
-*.orig.*
