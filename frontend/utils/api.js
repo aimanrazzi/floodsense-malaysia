@@ -54,6 +54,10 @@ export const floodApi = {
   /** All active SOS rescue cases — for the rescuer dashboard. */
   getRescueCases: () => get("/api/rescue/cases"),
 
+  /** Mark a case as resolved from the rescuer app. */
+  resolveCase: (caseId, outcome = "Rescued successfully") =>
+    post(`/api/rescue/resolve/${caseId}`, { outcome, officer: "Rescuer App" }),
+
   /** Liveness check. */
   health: () => get("/health"),
 };
