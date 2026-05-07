@@ -375,9 +375,16 @@ function renderSummary(d) {
   aiEl.style.color = RISK_COLOR[risk] || '#e2e8f0';
   document.getElementById('aiAction').textContent     = d.recommended_action ? '→ ' + d.recommended_action : '';
   const isAI = d.assessment_source === 'claude';
-  document.getElementById('aiConfidenceLabel').textContent = isAI ? 'Confidence' : 'Method';
-  document.getElementById('aiConfidence').textContent      = isAI ? Math.round((d.confidence||0) * 100) + '%' : 'Rule-based';
-  document.getElementById('aiConfidence').style.color      = isAI ? '#fff' : '#94a3b8';
+  const confEl = document.getElementById('aiConfidence');
+  const confWrap = confEl.parentElement;
+  if (isAI) {
+    confWrap.style.display = '';
+    document.getElementById('aiConfidenceLabel').textContent = 'Confidence';
+    confEl.textContent = Math.round((d.confidence||0) * 100) + '%';
+    confEl.style.color = '#fff';
+  } else {
+    confWrap.style.display = 'none';
+  }
 
   // Storm incoming bar
   const storms = d.storm_warnings || [];
