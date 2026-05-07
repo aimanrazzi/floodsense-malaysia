@@ -6,8 +6,21 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/logo.png",
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A1628"
+    },
     "android": {
-      "package": "com.aimanrazzi.floodsense"
+      "package": "com.aimanrazzi.floodsense",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET",
+        "VIBRATE"
+      ]
     },
     "ios": {
       "supportsTablet": true,
@@ -18,14 +31,14 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "bea01942-8bf5-4f14-b80b-63315b32aa13"
+        "projectId": "384cb9c9-b289-45a2-b8fe-d9d15a600719"
       }
     },
     "runtimeVersion": {
       "policy": "sdkVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/bea01942-8bf5-4f14-b80b-63315b32aa13"
+      "url": "https://u.expo.dev/384cb9c9-b289-45a2-b8fe-d9d15a600719"
     }
   }
 }
