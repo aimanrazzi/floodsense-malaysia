@@ -859,7 +859,7 @@ def _agent_msg(from_agent: str, to_agent: str, summary: str, payload: dict = Non
     msg = {
         "from":      from_agent,
         "to":        to_agent,
-        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "timestamp": _now().isoformat(),
         "summary":   summary,
         "payload":   payload or {},
     }

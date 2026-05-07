@@ -629,7 +629,7 @@ function renderAgentFeed(comms) {
           <span class="agent-from ${agClass}">${m.from}</span>
           <span class="text-slate-500 text-xs">→</span>
           <span class="text-slate-300 text-xs font-semibold">${m.to}</span>
-          <span class="ml-auto text-slate-500 text-xs">${m.timestamp}</span>
+          <span class="ml-auto text-slate-500 text-xs">${m.timestamp ? new Date(m.timestamp).toLocaleTimeString('en-MY') : ''}</span>
         </div>
         <p class="text-sm text-slate-200 font-semibold leading-snug">${m.summary}</p>
         ${detail ? `<p class="text-xs text-slate-400 mt-1">${detail}</p>` : ''}
