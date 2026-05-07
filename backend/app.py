@@ -1124,22 +1124,23 @@ def run_flood_agent() -> None:
 
 
 # ── Background Pipeline Loop ──────────────────────────────────────────────────
-# Plain daemon thread — more reliable than APScheduler under gunicorn's gthread model.
-# Runs the flood pipeline every 60 s and pings the health endpoint every 10 min
-# to prevent Render free-tier spin-down.
+# Started lazily on the first HTTP request so gunicorn is fully up before the
+# thread spawns. A watchdog check on every request auto-restarts the thread if
+# it ever dies — the keepalive ping acts as a heartbeat every 10 min.
 
 import threading
 
-def _background_loop() -> None:
-    _ping_interval = 600  # keepalive every 10 min
-    _ping_counter  = 0
+_pipeline_thread: threading.Thread = None  # type: ignore[assignment]
+_pipeline_lock   = threading.Lock()
 
+def _background_loop() -> None:
+    _ping_counter = 0
+    logger.info("[Pipeline] Background loop running — pid %s", os.getpid())
     while True:
         time.sleep(60)
         run_flood_agent()
-
         _ping_counter += 60
-        if _ping_counter >= _ping_interval:
+        if _ping_counter >= 600:
             _ping_counter = 0
             try:
                 import urllib.request
@@ -1152,12 +1153,30 @@ def _background_loop() -> None:
             except Exception as e:
                 logger.warning(f"[Keepalive] Ping failed: {e}")
 
-# Guard against double-start in Werkzeug reloader (parent process)
+def _ensure_pipeline() -> None:
+    """Start or restart the background pipeline thread if it is not alive."""
+    global _pipeline_thread
+    if _pipeline_thread is not None and _pipeline_thread.is_alive():
+        return
+    with _pipeline_lock:
+        if _pipeline_thread is not None and _pipeline_thread.is_alive():
+            return
+        _pipeline_thread = threading.Thread(
+            target=_background_loop, daemon=True, name="flood-pipeline"
+        )
+        _pipeline_thread.start()
+        logger.info("[Pipeline] Thread started/restarted — pid %s", os.getpid())
+
+@app.before_request
+def _watchdog():
+    """Auto-restart pipeline thread if dead. Runs on every request (near-zero cost)."""
+    _ensure_pipeline()
+
+# Run one cycle immediately at startup so data is ready for the first request.
+# Thread is started lazily by _watchdog on the first incoming request instead,
+# so gunicorn is fully initialised before the loop spawns.
 if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    run_flood_agent()  # initial cycle — data ready before first request
-    _t = threading.Thread(target=_background_loop, daemon=True, name="flood-pipeline")
-    _t.start()
-    logger.info("[Pipeline] Background loop started in process %s", os.getpid())
+    run_flood_agent()
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
