@@ -1117,19 +1117,18 @@ def run_flood_agent() -> None:
 
 # ── APScheduler: 60-second Background Loop ────────────────────────────────────
 def _keepalive_ping() -> None:
-    """Ping own health endpoint every 14 min to prevent Render free-tier spin-down."""
+    """Ping own health endpoint every 10 min to prevent Render free-tier spin-down."""
     try:
-        own_url = os.environ.get("RENDER_EXTERNAL_URL", "")
-        if own_url:
-            import urllib.request
-            urllib.request.urlopen(f"{own_url}/api/health", timeout=10)
-            logger.info("[Keepalive] Self-ping OK")
+        import urllib.request
+        own_url = os.environ.get("RENDER_EXTERNAL_URL", "https://floodsense-malaysia.onrender.com")
+        urllib.request.urlopen(f"{own_url}/api/health", timeout=10)
+        logger.info("[Keepalive] Self-ping OK")
     except Exception as e:
         logger.warning(f"[Keepalive] Ping failed: {e}")
 
 _scheduler = BackgroundScheduler(daemon=True)
 _scheduler.add_job(run_flood_agent, "interval", seconds=60, id="flood_agent")
-_scheduler.add_job(_keepalive_ping, "interval", seconds=840, id="keepalive")  # every 14 min
+_scheduler.add_job(_keepalive_ping, "interval", seconds=600, id="keepalive")  # every 10 min
 
 # Flask debug mode runs two processes (parent reloader + child worker).
 # Only start the scheduler in the child (WERKZEUG_RUN_MAIN=true) or in production.
