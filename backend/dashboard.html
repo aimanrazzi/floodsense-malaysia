@@ -4,65 +4,109 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FloodSense Malaysia — Government Operations Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background: #0a1628; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
-    .card  { background: #0f2440; border: 1px solid #1e3a5f; border-radius: 12px; padding: 18px; }
-    h1 { font-size: 1.35rem !important; }
-    h2 { font-size: 1rem !important; letter-spacing: -0.3px; }
+    :root {
+      --bg:       #0f172a;
+      --surface:  #1e293b;
+      --card:     #1e293b;
+      --border:   #334155;
+      --text:     #f1f5f9;
+      --muted:    #94a3b8;
+      --accent:   #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 14px; }
+
+    /* ── Cards ── */
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+
+    /* ── Typography ── */
+    h1 { font-size: 1.25rem !important; font-weight: 800; letter-spacing: -0.4px; }
+    h2 { font-size: 0.875rem !important; font-weight: 700; letter-spacing: -0.2px; color: var(--text); }
     table { font-size: 13px; }
-    #districtTable th { font-size: 12px; }
-    #districtTable td { font-size: 13px; padding-top: 7px !important; padding-bottom: 7px !important; }
-    .sos-card { font-size: 13px; }
-    .badge-DANGER  { background:#dc262622; color:#f87171; border:1px solid #dc2626; }
-    .badge-WARNING { background:#d9770622; color:#fbbf24; border:1px solid #d97706; }
-    .badge-WATCH   { background:#eab30822; color:#fde68a; border:1px solid #eab308; }
-    .badge-SAFE    { background:#16a34a22; color:#4ade80; border:1px solid #16a34a; }
-    .agent-from { font-size:12px; font-weight:700; padding:3px 9px; border-radius:99px; }
-    .ag-Data      { background:#1e3a5f; color:#93c5fd; }
-    .ag-Forecast  { background:#1a2a4a; color:#a5b4fc; }
-    .ag-Analysis  { background:#1e2a4a; color:#c4b5fd; }
-    .ag-Decision  { background:#1a3040; color:#6ee7b7; }
-    .ag-Action    { background:#1a2a1a; color:#86efac; }
-    .ag-Dashboard { background:#2a1a1a; color:#fca5a5; }
-    .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-    .dot-DANGER  { background:#dc2626; box-shadow:0 0 8px #dc2626; }
-    .dot-WARNING { background:#d97706; box-shadow:0 0 8px #d97706; }
-    .dot-WATCH   { background:#eab308; box-shadow:0 0 8px #eab308; }
-    .dot-SAFE    { background:#16a34a; box-shadow:0 0 8px #16a34a; }
-    .pulse { animation: pulse 2s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    .row-DANGER  { border-left:3px solid #dc2626; }
-    .row-WARNING { border-left:3px solid #d97706; }
-    .row-WATCH   { border-left:3px solid #eab308; }
-    .row-SAFE    { border-left:3px solid #16a34a; }
-    .filter-btn { padding:3px 10px; border-radius:99px; font-size:11px; font-weight:700; border:1px solid; cursor:pointer; transition:all 0.15s; }
-    .filter-btn.active-ALL     { background:#1e3a5f; color:#93c5fd; border-color:#2563eb; }
-    .filter-btn.active-DANGER  { background:#dc262622; color:#f87171; border-color:#dc2626; }
-    .filter-btn.active-WARNING { background:#d9770622; color:#fbbf24; border-color:#d97706; }
-    .filter-btn.active-WATCH   { background:#eab30822; color:#fde68a; border-color:#eab308; }
-    .filter-btn.active-SAFE    { background:#16a34a22; color:#4ade80; border-color:#16a34a; }
-    .filter-btn:not([class*="active"]) { background:transparent; color:#64748b; border-color:#334155; }
-    .sos-card { background:#1a0f0f; border:1px solid #7f1d1d; border-radius:10px; padding:12px; }
-    .dispatch-btn  { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; transition:background 0.15s; }
-    .dispatch-btn:hover  { background:#2563eb; }
-    .resolve-btn   { background:#15803d; color:#fff; border:none; border-radius:8px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; transition:background 0.15s; }
-    .resolve-btn:hover   { background:#16a34a; }
-    .resolved-card { opacity:0.55; }
-    .sos-filter-btn { padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; border:1px solid; cursor:pointer; transition:all 0.15s; }
-    .sos-filter-btn.sf-active { background:#1e3a5f; color:#93c5fd; border-color:#2563eb; }
-    .sos-filter-btn:not(.sf-active) { background:transparent; color:#64748b; border-color:#334155; }
-    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:50; }
-    .modal-box { background:#0f2440; border:1px solid #1e3a5f; border-radius:16px; padding:24px; width:100%; max-width:480px; }
-    ::-webkit-scrollbar { width:6px; }
-    ::-webkit-scrollbar-track { background:#0a1628; }
-    ::-webkit-scrollbar-thumb { background:#1e3a5f; border-radius:3px; }
-    .demo-sev-btn { padding:4px 6px; border-radius:8px; font-size:10px; font-weight:700; border:1px solid #334155; background:transparent; color:#64748b; cursor:pointer; transition:all 0.15s; }
-    .demo-sev-btn.sev-active { background:#4c1d95; color:#c4b5fd; border-color:#7c3aed; }
-    .demo-sev-btn:not(.sev-active):hover { border-color:#475569; color:#94a3b8; }
+    #districtTable th { font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
+    #districtTable td { font-size: 13px; padding-top: 8px !important; padding-bottom: 8px !important; }
+
+    /* ── Status badges ── */
+    .badge-DANGER  { background: rgba(220,38,38,0.15);  color: #fca5a5; border: 1px solid rgba(220,38,38,0.4);  border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+    .badge-WARNING { background: rgba(217,119,6,0.15);  color: #fcd34d; border: 1px solid rgba(217,119,6,0.4);  border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+    .badge-WATCH   { background: rgba(234,179,8,0.12);  color: #fde68a; border: 1px solid rgba(234,179,8,0.35); border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+    .badge-SAFE    { background: rgba(22,163,74,0.12);  color: #86efac; border: 1px solid rgba(22,163,74,0.35); border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+
+    /* ── Agent tags ── */
+    .agent-from { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.2px; }
+    .ag-Data      { background: #172554; color: #93c5fd; border: 1px solid #1e3a8a; }
+    .ag-Forecast  { background: #1e1b4b; color: #a5b4fc; border: 1px solid #312e81; }
+    .ag-Analysis  { background: #2e1065; color: #d8b4fe; border: 1px solid #4a1d96; }
+    .ag-Decision  { background: #064e3b; color: #6ee7b7; border: 1px solid #065f46; }
+    .ag-Action    { background: #14532d; color: #86efac; border: 1px solid #166534; }
+    .ag-Dashboard { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+
+    /* ── Status dot — no glow, just solid ── */
+    .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+    .dot-DANGER  { background: #ef4444; }
+    .dot-WARNING { background: #f59e0b; }
+    .dot-WATCH   { background: #eab308; }
+    .dot-SAFE    { background: #22c55e; }
+    .pulse { animation: pulse 2.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+
+    /* ── Table row accents ── */
+    .row-DANGER  { border-left: 3px solid #ef4444; }
+    .row-WARNING { border-left: 3px solid #f59e0b; }
+    .row-WATCH   { border-left: 3px solid #eab308; }
+    .row-SAFE    { border-left: 3px solid #334155; }
+
+    /* ── Filter buttons ── */
+    .filter-btn { padding: 3px 11px; border-radius: 5px; font-size: 11px; font-weight: 600; border: 1px solid; cursor: pointer; transition: all 0.15s; }
+    .filter-btn.active-ALL     { background: rgba(59,130,246,0.15); color: #93c5fd; border-color: rgba(59,130,246,0.5); }
+    .filter-btn.active-DANGER  { background: rgba(220,38,38,0.15);  color: #fca5a5; border-color: rgba(220,38,38,0.5); }
+    .filter-btn.active-WARNING { background: rgba(217,119,6,0.15);  color: #fcd34d; border-color: rgba(217,119,6,0.5); }
+    .filter-btn.active-WATCH   { background: rgba(234,179,8,0.12);  color: #fde68a; border-color: rgba(234,179,8,0.4); }
+    .filter-btn.active-SAFE    { background: rgba(22,163,74,0.12);  color: #86efac; border-color: rgba(22,163,74,0.4); }
+    .filter-btn:not([class*="active"]) { background: transparent; color: var(--muted); border-color: var(--border); }
+    .filter-btn:not([class*="active"]):hover { border-color: #475569; color: #cbd5e1; }
+
+    /* ── SOS cards ── */
+    .sos-card { background: #1a0f0f; border: 1px solid #450a0a; border-radius: 8px; padding: 12px; font-size: 13px; }
+    .dispatch-btn { background: #1d4ed8; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    .dispatch-btn:hover { background: #2563eb; }
+    .resolve-btn  { background: #15803d; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    .resolve-btn:hover  { background: #16a34a; }
+    .resolved-card { opacity: 0.45; }
+
+    /* ── SOS filter ── */
+    .sos-filter-btn { padding: 2px 9px; border-radius: 5px; font-size: 10px; font-weight: 600; border: 1px solid; cursor: pointer; transition: all 0.15s; }
+    .sos-filter-btn.sf-active { background: rgba(59,130,246,0.15); color: #93c5fd; border-color: rgba(59,130,246,0.5); }
+    .sos-filter-btn:not(.sf-active) { background: transparent; color: var(--muted); border-color: var(--border); }
+
+    /* ── Modals ── */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 50; backdrop-filter: blur(2px); }
+    .modal-box { background: #1e293b; border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 100%; max-width: 480px; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+    /* ── Demo severity buttons ── */
+    .demo-sev-btn { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.15s; }
+    .demo-sev-btn.sev-active { background: rgba(124,58,237,0.2); color: #c4b5fd; border-color: rgba(124,58,237,0.5); }
+    .demo-sev-btn:not(.sev-active):hover { border-color: #475569; color: #cbd5e1; }
+
+    /* ── Stat cards ── */
+    .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+    .stat-value { font-size: 1.75rem; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+    .stat-label { font-size: 11px; font-weight: 500; color: var(--muted); margin-top: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* ── Header bar ── */
+    .top-bar { background: #162032; border-bottom: 1px solid var(--border); padding: 12px 20px; margin: -16px -16px 20px -16px; border-radius: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   </style>
 </head>
-<body class="min-h-screen p-4">
+<body class="min-h-screen p-4" style="padding-top:0">
 
   <!-- Demo Inject Modal -->
   <div class="modal-overlay hidden" id="demoModal">
@@ -166,35 +210,52 @@
     </div>
   </div>
 
-  <!-- Header -->
-  <div class="flex items-center justify-between mb-4">
+  <!-- Header bar -->
+  <div class="top-bar">
     <div class="flex items-center gap-3">
-      <img src="/static/logo (2).png" alt="FloodSense" style="width:50px;height:50px;object-fit:contain;border-radius:8px;" onerror="this.style.display='none'" />
+      <img src="/static/logo.png" alt="FloodSense" style="width:38px;height:38px;object-fit:contain;border-radius:7px;" onerror="this.style.display='none'" />
       <div>
-        <h1 class="text-xl font-bold text-white">FloodSense Malaysia</h1>
-        <p class="text-xs text-slate-400">Government Operations Dashboard · Agentic AI Early Warning System · KL / Selangor</p>
+        <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9;letter-spacing:-0.4px">FloodSense Malaysia</div>
+        <div style="font-size:11px;color:#64748b;margin-top:1px">Government Operations Dashboard &nbsp;·&nbsp; KL / Selangor</div>
       </div>
     </div>
-    <div class="flex items-center gap-3 flex-wrap">
+    <div class="flex items-center gap-4 flex-wrap">
+      <div class="flex items-center gap-2">
+        <span class="dot pulse" id="statusDot"></span>
+        <span style="font-size:13px;font-weight:700;" id="overallRisk">Loading…</span>
+      </div>
+      <span style="font-size:11px;color:#475569;" id="lastUpdated"></span>
       <button onclick="openDemoModal()"
-        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-purple-800 hover:bg-purple-700 text-purple-200 border border-purple-600 transition-colors">
-        🎯 Demo Spike
+        style="font-size:11px;font-weight:600;padding:6px 14px;border-radius:6px;background:rgba(124,58,237,0.2);color:#c4b5fd;border:1px solid rgba(124,58,237,0.4);cursor:pointer;transition:all 0.15s;"
+        onmouseover="this.style.background='rgba(124,58,237,0.3)'" onmouseout="this.style.background='rgba(124,58,237,0.2)'">
+        Demo Spike
       </button>
-      <span class="dot pulse" id="statusDot"></span>
-      <span class="text-sm font-bold" id="overallRisk">Loading…</span>
-      <span class="text-xs text-slate-500" id="lastUpdated"></span>
     </div>
   </div>
 
+  <div class="px-2">
+
   <!-- Summary Stat Cards -->
   <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-    <div class="card text-center"><div class="text-2xl font-bold text-red-400" id="s-risk">—</div><div class="text-xs text-slate-400 mt-1">At Risk</div></div>
-    <div class="card text-center"><div class="text-2xl font-bold text-yellow-300" id="s-watch">—</div><div class="text-xs text-slate-400 mt-1">Watch</div></div>
-    <div class="card text-center"><div class="text-2xl font-bold text-green-400" id="s-safe">—</div><div class="text-xs text-slate-400 mt-1">Safe</div></div>
-    <div class="card text-center"><div class="text-2xl font-bold text-blue-300" id="s-evac">—</div><div class="text-xs text-slate-400 mt-1">Evac Capacity</div></div>
-    <div class="card text-center cursor-pointer hover:border-orange-500 transition-colors" onclick="scrollToSOS()">
-      <div class="text-2xl font-bold text-orange-400" id="s-sos">—</div>
-      <div class="text-xs text-slate-400 mt-1">Active SOS ↓</div>
+    <div class="stat-card" style="border-top:3px solid #ef4444">
+      <div class="stat-value" style="color:#fca5a5" id="s-risk">—</div>
+      <div class="stat-label">At Risk</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #f59e0b">
+      <div class="stat-value" style="color:#fcd34d" id="s-watch">—</div>
+      <div class="stat-label">Watch</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #22c55e">
+      <div class="stat-value" style="color:#86efac" id="s-safe">—</div>
+      <div class="stat-label">Safe</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #3b82f6">
+      <div class="stat-value" style="color:#93c5fd" id="s-evac">—</div>
+      <div class="stat-label">Evac Capacity</div>
+    </div>
+    <div class="stat-card cursor-pointer" style="border-top:3px solid #f97316" onclick="scrollToSOS()">
+      <div class="stat-value" style="color:#fdba74" id="s-sos">—</div>
+      <div class="stat-label">Active SOS</div>
     </div>
   </div>
 
@@ -233,7 +294,7 @@
     <div class="lg:col-span-2 space-y-4">
       <div class="card">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="text-sm font-bold text-white"> District Status</h2>
+          <h2>District Status</h2>
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-xs text-slate-500">Filter:</span>
             <button class="filter-btn active-ALL" data-filter="ALL" onclick="setFilter('ALL')">All</button>
@@ -264,7 +325,7 @@
       <!-- SOS Panel -->
       <div class="card" id="sosPanel">
         <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <h2 class="text-sm font-bold text-white">🆘 SOS Cases</h2>
+          <h2>SOS Cases</h2>
           <span class="text-xs text-slate-500" id="sosCount">No active cases</span>
         </div>
         <div class="flex gap-1.5 mb-3 flex-wrap">
@@ -280,14 +341,14 @@
 
       <!-- Evacuation Summary -->
       <div class="card">
-        <h2 class="text-sm font-bold text-white mb-3">🏫 Evacuation Centres — Location &amp; Capacity</h2>
+        <h2 class="mb-3">Evacuation Centres</h2>
         <div id="evacSummary" class="grid grid-cols-2 md:grid-cols-3 gap-2 overflow-y-auto" style="max-height:320px"></div>
       </div>
     </div>
 
     <!-- Agent Comms Feed -->
     <div class="card flex flex-col" style="max-height:720px">
-      <h2 class="text-sm font-bold text-white mb-2">🤖 Agent Communication Log</h2>
+      <h2 class="mb-2">Agent Communication Log</h2>
       <div class="text-xs text-slate-500 mb-3">
         <div class="flex gap-1.5 flex-wrap">
           <span class="agent-from ag-Data">DataAgent</span>
@@ -304,9 +365,10 @@
   </div>
 
   <!-- Footer -->
-  <div class="mt-4 text-center text-xs text-slate-600">
-    FloodSense Malaysia · Auto-refreshes every 15s · Powered by Claude AI + Isolation Forest ML + WeatherAPI · KL/Selangor focus
+  <div class="mt-4 text-center" style="font-size:11px;color:#334155;padding-bottom:16px">
+    FloodSense Malaysia &nbsp;·&nbsp; Refreshes every 15s &nbsp;·&nbsp; KL / Selangor
   </div>
+  </div><!-- end px-2 wrapper -->
 
 <script>
 const RISK_COLOR = { DANGER:'#f87171', WARNING:'#fbbf24', WATCH:'#fde68a', SAFE:'#4ade80' };

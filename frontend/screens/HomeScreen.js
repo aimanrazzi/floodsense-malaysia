@@ -14,10 +14,10 @@ import { floodApi } from "../utils/api";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const FS = {
-  primary: "#1B6CA8", danger: "#DC2626", warning: "#D97706",
-  watch: "#EAB308", safe: "#16A34A", bg: "#0A1628",
-  surface: "#112240", card: "#1A3A5C", text: "#E8F4FD",
-  subtext: "#7FA8C4", border: "#1E3A5F",
+  primary: "#3B82F6", danger: "#EF4444", warning: "#F59E0B",
+  watch: "#EAB308", safe: "#22C55E", bg: "#0F172A",
+  surface: "#1E293B", card: "#1E293B", text: "#F1F5F9",
+  subtext: "#94A3B8", border: "#334155",
 };
 
 const STATUS_ICON  = { DANGER: "🔴", WARNING: "🟠", WATCH: "🟡", SAFE: "🟢" };
@@ -448,7 +448,7 @@ export default function FloodMapScreen({ navigation }) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <LinearGradient colors={["#0A1628", "#112240", "#0D1F38"]} style={{ flex: 1 }}>
+    <LinearGradient colors={["#0F172A", "#0F172A", "#131F35"]} style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor={FS.bg} />
 
