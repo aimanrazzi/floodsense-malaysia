@@ -1110,6 +1110,7 @@ def run_flood_agent() -> None:
     DataAgent → ForecastAgent → AnalysisAgent → DecisionAgent → ActionAgent
     """
     global _last_cycle_at
+    _last_cycle_at = _now().isoformat()   # stamp every attempt so the dashboard reflects scheduler heartbeat
     logger.info("[Pipeline] ── Starting KL/Selangor flood assessment cycle ──")
     try:
         raw        = _data_agent()
@@ -1117,9 +1118,10 @@ def run_flood_agent() -> None:
         analysis   = _analysis_agent(forecasted)
         decision   = _decision_agent(analysis)
         _action_agent(decision)
-        _last_cycle_at = _now().isoformat()
+        logger.info("[Pipeline] Cycle complete")
     except Exception as e:
-        logger.error(f"[Pipeline] Cycle failed: {e}")
+        import traceback
+        logger.error(f"[Pipeline] Cycle failed: {e}\n{traceback.format_exc()}")
 
 
 # ── APScheduler: 60-second Background Loop ────────────────────────────────────
@@ -1127,8 +1129,8 @@ def _keepalive_ping() -> None:
     """Ping own health endpoint every 10 min to prevent Render free-tier spin-down."""
     try:
         import urllib.request
-        own_url = os.environ.get("RENDER_EXTERNAL_URL", "https://floodsense-malaysia.onrender.com")
-        urllib.request.urlopen(f"{own_url}/api/health", timeout=10)
+        own_url = os.environ.get("RENDER_EXTERNAL_URL", "https://floodsense-malaysia.onrender.com").rstrip("/")
+        urllib.request.urlopen(f"{own_url}/health", timeout=10)
         logger.info("[Keepalive] Self-ping OK")
     except Exception as e:
         logger.warning(f"[Keepalive] Ping failed: {e}")
@@ -1615,6 +1617,27 @@ def dispatch_rescue(case_id):
                     })
                 except Exception:
                     pass
+            return jsonify({"success": True, "case": case})
+    return jsonify({"error": "Case not found"}), 404
+
+
+@app.route("/api/rescue/respond/<case_id>", methods=["POST"])
+def respond_rescue(case_id):
+    """POST /api/rescue/respond/<case_id> — Volunteer commits to responding to a case."""
+    for case in _rescue_cases:
+        if case.get("id") == case_id or case.get("case_id") == case_id:
+            if case.get("status") == "dispatched":
+                return jsonify({"error": "Official team already dispatched"}), 409
+            case["status"]       = "responding"
+            case["responded_at"] = _now().isoformat()
+            if _firebase_initialized and _firestore_db:
+                try:
+                    _firestore_db.collection("rescue_requests").document(case_id).update({
+                        "status": "responding", "responded_at": case["responded_at"],
+                    })
+                except Exception:
+                    pass
+            logger.info(f"[Rescue] Case {case_id} — volunteer responding")
             return jsonify({"success": True, "case": case})
     return jsonify({"error": "Case not found"}), 404
 
