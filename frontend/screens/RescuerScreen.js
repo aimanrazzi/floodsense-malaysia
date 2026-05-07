@@ -63,20 +63,44 @@ export default function RescuerScreen({ navigation }) {
     }
   }, []);
 
+  const handleRespond = useCallback((c) => {
+    Alert.alert(
+      "Confirm Response",
+      `You are committing to help at ${c.district}. The dashboard will show you are on your way.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "I'm on my way",
+          onPress: async () => {
+            setResolving(c.case_id);
+            try {
+              await floodApi.respondToCase(c.case_id);
+              setCases(prev => prev.map(x =>
+                x.case_id === c.case_id ? { ...x, status: "responding" } : x
+              ));
+            } catch {
+              Alert.alert("Error", "Could not update case. Try again.");
+            } finally {
+              setResolving(null);
+            }
+          },
+        },
+      ]
+    );
+  }, []);
+
   const handleResolve = useCallback((c) => {
     Alert.alert(
       "Mark as Resolved",
-      `Confirm case ${c.case_id} in ${c.district} is handled?`,
+      `Confirm case ${c.case_id} in ${c.district} is fully handled?`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Resolved",
-          style: "destructive",
           onPress: async () => {
             setResolving(c.case_id);
             try {
               await floodApi.resolveCase(c.case_id);
-              // Remove immediately from local state — backend + dashboard will sync on next poll
               setCases(prev => prev.filter(x => x.case_id !== c.case_id));
             } catch {
               Alert.alert("Error", "Could not update case. Try again.");
@@ -167,88 +191,135 @@ export default function RescuerScreen({ navigation }) {
                 </View>
 
                 {cases.map((c, i) => {
-                  const isDispatched = c.status === "dispatched";
-                  const isResolving  = resolving === c.case_id;
+                  const status      = c.status || "received";
+                  const isDispatched  = status === "dispatched";
+                  const isResponding  = status === "responding";
+                  const isBusy        = resolving === c.case_id;
+
                   return (
-                    <View key={c.case_id || i} style={[styles.card, isDispatched && styles.cardDispatched]}>
+                    <View key={c.case_id || i} style={[
+                      styles.card,
+                      isDispatched && styles.cardDispatched,
+                      isResponding && styles.cardResponding,
+                    ]}>
+
+                      {/* Header row */}
                       <View style={styles.cardTop}>
                         <View style={{ flex: 1 }}>
                           <View style={styles.caseIdRow}>
                             <Text style={styles.caseId}>{c.case_id}</Text>
-                            {isDispatched && (
-                              <View style={styles.dispatchedTag}>
-                                <Text style={styles.dispatchedTagText}>Team Dispatched</Text>
-                              </View>
-                            )}
-                            <Text style={styles.timeAgo}>{timeAgo(c.timestamp)}</Text>
+                            <View style={[styles.statusTag,
+                              isDispatched ? styles.statusTagDispatched :
+                              isResponding ? styles.statusTagResponding :
+                              styles.statusTagReceived
+                            ]}>
+                              <Text style={[styles.statusTagText,
+                                isDispatched ? { color: "#6ee7b7" } :
+                                isResponding ? { color: "#93c5fd" } :
+                                { color: "#fca5a5" }
+                              ]}>
+                                {isDispatched ? "Team Dispatched" :
+                                 isResponding ? "Volunteer Responding" :
+                                 "Awaiting Response"}
+                              </Text>
+                            </View>
                           </View>
                           <Text style={styles.district}>{c.district}</Text>
-                        </View>
-                        <View style={styles.situationBadge}>
-                          <Text style={styles.situationIcon}>
-                            {SITUATION_ICONS[c.situation] || "🆘"}
-                          </Text>
+                          <Text style={styles.timeAgo}>{timeAgo(c.timestamp)}</Text>
                         </View>
                       </View>
 
+                      {/* Detail metrics */}
                       <View style={styles.detailRow}>
                         <View style={styles.detailItem}>
-                          <Text style={styles.detailLabel}>Situation</Text>
+                          <Text style={styles.detailLabel}>SITUATION</Text>
                           <Text style={styles.detailValue}>{c.situation}</Text>
                         </View>
                         <View style={styles.detailItem}>
-                          <Text style={styles.detailLabel}>People</Text>
+                          <Text style={styles.detailLabel}>PEOPLE</Text>
                           <Text style={styles.detailValue}>{c.people_count}</Text>
                         </View>
                         <View style={styles.detailItem}>
                           <Text style={styles.detailLabel}>GPS</Text>
                           <Text style={[styles.detailValue, { color: hasGps(c) ? FS.safe : FS.subtext }]}>
-                            {hasGps(c) ? "Yes" : "No"}
+                            {hasGps(c) ? "Available" : "None"}
                           </Text>
                         </View>
                       </View>
 
+                      {/* Dispatched team info */}
                       {isDispatched && c.team && (
                         <View style={styles.teamBox}>
-                          <Text style={styles.teamText}>Assigned: {c.team}</Text>
+                          <Text style={styles.teamLabel}>ASSIGNED TEAM</Text>
+                          <Text style={styles.teamText}>{c.team}</Text>
                         </View>
                       )}
 
+                      {/* Notes */}
                       {c.notes ? (
                         <View style={styles.notesBox}>
                           <Text style={styles.notesText}>{c.notes}</Text>
                         </View>
                       ) : null}
 
+                      {/* GPS coords */}
                       {hasGps(c) && (
                         <Text style={styles.coordsText}>
                           {Number(c.latitude).toFixed(5)}, {Number(c.longitude).toFixed(5)}
                         </Text>
                       )}
 
-                      <View style={styles.btnRow}>
+                      {/* Action buttons — state-driven */}
+                      {isDispatched ? (
+                        // Official team handling — no volunteer actions
+                        <View style={styles.lockedNotice}>
+                          <Text style={styles.lockedText}>Official team is handling this case</Text>
+                          <TouchableOpacity
+                            style={[styles.navBtn, hasGps(c) && styles.navBtnGps]}
+                            onPress={() => navigate(c)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.navBtnText}>Navigate</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : isResponding ? (
+                        // Volunteer committed — can navigate and resolve
+                        <View style={styles.btnRow}>
+                          <TouchableOpacity
+                            style={[styles.navBtn, hasGps(c) && styles.navBtnGps, { flex: 1 }]}
+                            onPress={() => navigate(c)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.navBtnText}>
+                              {hasGps(c) ? "Navigate to GPS" : "Navigate to District"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.resolveBtn, isBusy && { opacity: 0.6 }]}
+                            onPress={() => handleResolve(c)}
+                            disabled={isBusy}
+                            activeOpacity={0.8}
+                          >
+                            {isBusy
+                              ? <ActivityIndicator size="small" color="#fff" />
+                              : <Text style={styles.resolveBtnText}>Resolved</Text>
+                            }
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        // Received — volunteer can commit
                         <TouchableOpacity
-                          style={[styles.navBtn, hasGps(c) && styles.navBtnGps, { flex: 1 }]}
-                          onPress={() => navigate(c)}
+                          style={[styles.respondBtn, isBusy && { opacity: 0.6 }]}
+                          onPress={() => handleRespond(c)}
+                          disabled={isBusy}
                           activeOpacity={0.8}
                         >
-                          <Text style={styles.navBtnText}>
-                            {hasGps(c) ? "Navigate to GPS" : "Navigate to District"}
-                          </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.resolveBtn, isResolving && { opacity: 0.6 }]}
-                          onPress={() => handleResolve(c)}
-                          disabled={isResolving}
-                          activeOpacity={0.8}
-                        >
-                          {isResolving
+                          {isBusy
                             ? <ActivityIndicator size="small" color="#fff" />
-                            : <Text style={styles.resolveBtnText}>Resolved</Text>
+                            : <Text style={styles.respondBtnText}>I'm on my way</Text>
                           }
                         </TouchableOpacity>
-                      </View>
+                      )}
                     </View>
                   );
                 })}
@@ -348,4 +419,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, alignItems: "center", justifyContent: "center",
   },
   resolveBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+
+  cardResponding: { borderColor: "#1d4ed8", borderWidth: 1.5 },
+
+  statusTag: { borderRadius: 4, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2 },
+  statusTagDispatched: { backgroundColor: "#064e3b", borderColor: "#065f46" },
+  statusTagResponding: { backgroundColor: "#172554", borderColor: "#1e3a8a" },
+  statusTagReceived:   { backgroundColor: "#450a0a", borderColor: "#7f1d1d" },
+  statusTagText: { fontSize: 10, fontWeight: "700" },
+
+  teamLabel: { fontSize: 10, color: "#6ee7b7", marginBottom: 3, fontWeight: "700" },
+
+  respondBtn: {
+    backgroundColor: "#15803d", borderRadius: 10, paddingVertical: 13, alignItems: "center",
+  },
+  respondBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+
+  lockedNotice: { gap: 8 },
+  lockedText:   { fontSize: 12, color: "#6ee7b7", textAlign: "center", marginBottom: 4 },
 });
