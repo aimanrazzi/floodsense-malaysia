@@ -212,7 +212,7 @@ export default function AlertDetailScreen({ route, navigation }) {
               {/* AI reasoning */}
               {assessment.reasoning && (
                 <View style={styles.card}>
-                  <Text style={styles.cardTitle}>🤖 AI Reasoning</Text>
+                  <Text style={styles.cardTitle}>Summary</Text>
                   <Text style={styles.reasoningText}>{assessment.reasoning}</Text>
                 </View>
               )}
@@ -220,14 +220,14 @@ export default function AlertDetailScreen({ route, navigation }) {
               {/* Risk Factors — flood-type-aware, replaces the generic Affected Districts list */}
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>
-                  {isFlash ? "⚡ Flash Flood Risk Factors" : "🌊 River Overflow Risk Factors"}
+                  {isFlash ? "Flash Flood Risk Factors" : "River Overflow Risk Factors"}
                 </Text>
 
                 {isFlash ? (
                   <>
                     <View style={styles.factorRow}>
                       <Text style={styles.factorLabel}>Flood Type</Text>
-                      <Text style={styles.factorValue}>⚡ Flash Flood (Banjir Kilat)</Text>
+                      <Text style={styles.factorValue}>Flash Flood (Banjir Kilat)</Text>
                     </View>
                     <View style={styles.factorRow}>
                       <Text style={styles.factorLabel}>Primary Trigger</Text>
@@ -256,7 +256,7 @@ export default function AlertDetailScreen({ route, navigation }) {
                   <>
                     <View style={styles.factorRow}>
                       <Text style={styles.factorLabel}>Flood Type</Text>
-                      <Text style={styles.factorValue}>🌊 River Overflow (Banjir Sungai)</Text>
+                      <Text style={styles.factorValue}>River Overflow (Banjir Sungai)</Text>
                     </View>
                     <View style={styles.factorRow}>
                       <Text style={styles.factorLabel}>Primary Trigger</Text>

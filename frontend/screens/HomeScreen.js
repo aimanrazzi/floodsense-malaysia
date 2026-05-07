@@ -324,7 +324,7 @@ export default function FloodMapScreen({ navigation }) {
                 <Text style={[styles.metricValue, { fontSize: 9 }]} numberOfLines={2}>
                   {item.condition || "Clear"}
                 </Text>
-                <Text style={styles.metricLabel}>WeatherAPI</Text>
+                <Text style={styles.metricLabel}>Weather</Text>
               </View>
             </>
           ) : (
