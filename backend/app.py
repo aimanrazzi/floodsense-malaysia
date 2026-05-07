@@ -844,6 +844,7 @@ _demo_expiry:     float = 0.0   # epoch time after which demo-injected readings 
 _agent_comms:     list = []   # rolling log of inter-agent messages for dashboard
 _push_tokens:     list = []   # Expo push tokens registered by citizen app users
 _latest_storm_warnings: list = []  # most recent ForecastAgent storm cell warnings
+_last_cycle_at:   str  = ""   # ISO timestamp of last successful pipeline cycle
 
 
 def _agent_msg(from_agent: str, to_agent: str, summary: str, payload: dict = None) -> dict:
@@ -1101,6 +1102,7 @@ def run_flood_agent() -> None:
     Orchestrates the 5-agent pipeline:
     DataAgent → ForecastAgent → AnalysisAgent → DecisionAgent → ActionAgent
     """
+    global _last_cycle_at
     logger.info("[Pipeline] ── Starting KL/Selangor flood assessment cycle ──")
     try:
         raw        = _data_agent()
@@ -1108,13 +1110,26 @@ def run_flood_agent() -> None:
         analysis   = _analysis_agent(forecasted)
         decision   = _decision_agent(analysis)
         _action_agent(decision)
+        _last_cycle_at = datetime.now().isoformat()
     except Exception as e:
         logger.error(f"[Pipeline] Cycle failed: {e}")
 
 
 # ── APScheduler: 60-second Background Loop ────────────────────────────────────
+def _keepalive_ping() -> None:
+    """Ping own health endpoint every 14 min to prevent Render free-tier spin-down."""
+    try:
+        own_url = os.environ.get("RENDER_EXTERNAL_URL", "")
+        if own_url:
+            import urllib.request
+            urllib.request.urlopen(f"{own_url}/api/health", timeout=10)
+            logger.info("[Keepalive] Self-ping OK")
+    except Exception as e:
+        logger.warning(f"[Keepalive] Ping failed: {e}")
+
 _scheduler = BackgroundScheduler(daemon=True)
 _scheduler.add_job(run_flood_agent, "interval", seconds=60, id="flood_agent")
+_scheduler.add_job(_keepalive_ping, "interval", seconds=840, id="keepalive")  # every 14 min
 
 # Flask debug mode runs two processes (parent reloader + child worker).
 # Only start the scheduler in the child (WERKZEUG_RUN_MAIN=true) or in production.
@@ -1708,7 +1723,7 @@ def dashboard_stats():
         "reasoning":          latest.get("reasoning", ""),
         "recommended_action": latest.get("recommended_action", ""),
         "confidence":         latest.get("confidence", 0),
-        "last_updated":       latest.get("timestamp", ""),
+        "last_updated":       _last_cycle_at or latest.get("timestamp", ""),
         "affected_districts": latest.get("affected_districts", []),
         "districts":          districts_summary,
         "storm_warnings":     _latest_storm_warnings,
