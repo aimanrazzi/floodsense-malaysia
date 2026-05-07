@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { View, Text, StyleSheet, StatusBar, Dimensions } from "react-native";
+import { View, Text, StyleSheet, StatusBar, Dimensions, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 
 const { width, height } = Dimensions.get("window");
@@ -24,7 +24,7 @@ export default function SplashScreen({ onDone }) {
       <View style={[styles.ring, { width: 220, height: 220, borderColor: "rgba(27,108,168,0.5)" }]} />
       <View style={[styles.ring, { width: 130, height: 130, borderColor: "rgba(27,108,168,0.7)" }]} />
       <View style={styles.textWrap}>
-        <Text style={styles.droplet}>💧</Text>
+        <Image source={require("../assets/logo.png")} style={styles.logoImg} />
         <Text style={styles.title}>FloodSense</Text>
         <Text style={styles.sub}>Malaysia Early Warning System</Text>
       </View>
@@ -51,9 +51,13 @@ const styles = StyleSheet.create({
   textWrap: {
     alignItems: "center",
   },
-  droplet: {
-    fontSize: 64,
+  logoImg: {
+    width: 100,
+    height: 100,
+    resizeMode: "contain",
     marginBottom: 16,
+    borderRadius: 8,
+
   },
   title: {
     fontSize: 42,

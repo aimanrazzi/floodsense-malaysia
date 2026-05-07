@@ -156,7 +156,7 @@ export const translations = {
       riverLevel: "River Level", rainfall: "mm/hr", drainStress: "Drain Stress", jpsMonitor: "JPS Monitor",
       watch15: "Watch 15mm", danger50: "Danger 50mm", watch3m: "Watch 3m", danger55m: "Danger 5.5m",
       findEvacuation: "Find Evacuation Centres", viewAiAnalysis: "Tap for full AI analysis →",
-      viewDetails: "View Details →", demo: "Demo",
+      viewDetails: "View Details →",
       detected: "DETECTED", aiReady: "AI analysis ready", anomalyFlagged: "Anomaly flagged by ML model", viewBtn: "View",
       fetchingData: "Fetching JPS river data…", autoRefresh: "auto-refresh 30s", updated: "Updated",
       jpsThresholds: "JPS River Level Thresholds", rainfallThresholds: "Rainfall Alert Thresholds",

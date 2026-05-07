@@ -1,17 +1,8 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar,
-  Modal,
-  Pressable,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
+  TextInput, KeyboardAvoidingView, Platform, ScrollView,
+  StatusBar, Modal, Pressable, Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -22,36 +13,34 @@ import {
   sendPasswordResetEmail,
 } from "firebase/auth";
 import { auth } from "../firebase";
-import { darkTheme } from "../context/ThemeContext";
 
-// Google Sign-In — only works in native APK build, not Expo Go
-let GoogleSignin = null;
-try {
-  GoogleSignin = require("@react-native-google-signin/google-signin").GoogleSignin;
-  const { statusCodes } = require("@react-native-google-signin/google-signin");
-  GoogleSignin.configure({
-    webClientId: "414393200615-6nv5qpe6m1t0ssc7d5k4jko6o1bgptbn.apps.googleusercontent.com",
-  });
-} catch (e) {
-  // Not available in Expo Go
-}
+const FS = {
+  primary:  "#1B6CA8",
+  primaryDim:"#1B6CA822",
+  bg:       "#0A1628",
+  surface:  "#0F2440",
+  card:     "#1A3A5C",
+  text:     "#E8F4FD",
+  subtext:  "#7FA8C4",
+  border:   "#1E3A5F",
+  danger:   "#DC2626",
+};
 
 export default function LoginScreen() {
-  const theme = darkTheme;
-  const [mode, setMode] = useState("login"); // "login" or "signup"
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [forgotVisible, setForgotVisible] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotSuccess, setForgotSuccess] = useState(false);
-  const [forgotError, setForgotError] = useState("");
+  const [mode,         setMode]         = useState("login");
+  const [name,         setName]         = useState("");
+  const [email,        setEmail]        = useState("");
+  const [password,     setPassword]     = useState("");
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState("");
+  const [forgotVisible,  setForgotVisible]  = useState(false);
+  const [forgotEmail,    setForgotEmail]    = useState("");
+  const [forgotLoading,  setForgotLoading]  = useState(false);
+  const [forgotSuccess,  setForgotSuccess]  = useState(false);
+  const [forgotError,    setForgotError]    = useState("");
 
   const openForgot = () => {
-    setForgotEmail(email); // pre-fill if user already typed email
+    setForgotEmail(email);
     setForgotSuccess(false);
     setForgotError("");
     setForgotVisible(true);
@@ -66,7 +55,7 @@ export default function LoginScreen() {
       setForgotSuccess(true);
     } catch (e) {
       const msg = {
-        "auth/invalid-email": "Invalid email address.",
+        "auth/invalid-email":  "Invalid email address.",
         "auth/user-not-found": "No account found with this email.",
       }[e.code] || "Could not send reset email. Try again.";
       setForgotError(msg);
@@ -75,36 +64,10 @@ export default function LoginScreen() {
     }
   };
 
-  const handleGoogle = async () => {
-    if (!GoogleSignin) {
-      setError("Google Sign-In is only available in the installed APK, not Expo Go.");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    try {
-      await GoogleSignin.hasPlayServices();
-      const { idToken } = await GoogleSignin.signIn();
-      const { GoogleAuthProvider, signInWithCredential } = require("firebase/auth");
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
-    } catch (e) {
-      setError("Google Sign-In failed. Try email instead.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSubmit = async () => {
     setError("");
-    if (!email || !password) {
-      setError("Please enter email and password.");
-      return;
-    }
-    if (mode === "signup" && !name) {
-      setError("Please enter your name.");
-      return;
-    }
+    if (!email || !password) { setError("Please enter email and password."); return; }
+    if (mode === "signup" && !name) { setError("Please enter your name."); return; }
     setLoading(true);
     try {
       if (mode === "login") {
@@ -115,12 +78,12 @@ export default function LoginScreen() {
       }
     } catch (e) {
       const msg = {
-        "auth/invalid-email": "Invalid email address.",
-        "auth/user-not-found": "No account found. Please sign up.",
-        "auth/wrong-password": "Incorrect password.",
-        "auth/email-already-in-use": "Email already registered. Please log in.",
-        "auth/weak-password": "Password must be at least 6 characters.",
-        "auth/invalid-credential": "Incorrect email or password.",
+        "auth/invalid-email":       "Invalid email address.",
+        "auth/user-not-found":      "No account found. Please sign up.",
+        "auth/wrong-password":      "Incorrect password.",
+        "auth/email-already-in-use":"Email already registered. Please log in.",
+        "auth/weak-password":       "Password must be at least 6 characters.",
+        "auth/invalid-credential":  "Incorrect email or password.",
       }[e.code] || e.message;
       setError(msg);
     } finally {
@@ -129,49 +92,57 @@ export default function LoginScreen() {
   };
 
   return (
-    <LinearGradient colors={theme.backgroundGradient} style={{ flex: 1 }}>
-      <StatusBar barStyle={theme.statusBar} />
+    <LinearGradient colors={["#0A1628", "#0D1F38", "#112240"]} style={{ flex: 1 }}>
+      <StatusBar barStyle="light-content" backgroundColor={FS.bg} />
       <SafeAreaView style={{ flex: 1 }}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={{ flex: 1 }}
         >
-          <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24 }} keyboardShouldPersistTaps="handled">
-
-            {/* Top bar */}
-            <View style={S.topBar}>
-              <Text style={S.logo}>Combat.</Text>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Branding */}
+            <View style={S.brandWrap}>
+              <Image source={require("../assets/logo.png")} style={S.brandLogo} />
+              <Text style={S.brandName}>FloodSense</Text>
+              <Text style={S.brandSub}>Malaysia</Text>
+              <Text style={S.brandTagline}>Agentic AI Early Warning System</Text>
+              <View style={S.brandBadge}>
+                <Text style={S.brandBadgeText}>KL / Selangor · Real-time</Text>
+              </View>
             </View>
 
-            <View style={{ flex: 1, justifyContent: "center", paddingTop: 20, paddingBottom: 40 }}>
-              {/* Toggle */}
+            <View style={{ paddingBottom: 40 }}>
+              {/* Login / Sign Up toggle */}
               <View style={S.toggleWrap}>
                 <TouchableOpacity
                   style={[S.toggleBtn, mode === "login" && S.toggleActive]}
                   onPress={() => { setMode("login"); setError(""); }}
                 >
-                  <Text style={[S.toggleText, { color: mode === "login" ? "#fff" : "rgba(255,255,255,0.5)" }]}>
-                    Log in
+                  <Text style={[S.toggleText, { color: mode === "login" ? "#fff" : FS.subtext }]}>
+                    Log In
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[S.toggleBtn, mode === "signup" && S.toggleActive]}
                   onPress={() => { setMode("signup"); setError(""); }}
                 >
-                  <Text style={[S.toggleText, { color: mode === "signup" ? "#fff" : "rgba(255,255,255,0.5)" }]}>
+                  <Text style={[S.toggleText, { color: mode === "signup" ? "#fff" : FS.subtext }]}>
                     Sign Up
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Name (signup only) */}
+              {/* Name — signup only */}
               {mode === "signup" && (
                 <View style={S.inputWrap}>
                   <Text style={S.inputLabel}>Full Name</Text>
                   <TextInput
                     style={S.input}
                     placeholder="Your name"
-                    placeholderTextColor="rgba(255,255,255,0.35)"
+                    placeholderTextColor={FS.subtext + "88"}
                     value={name}
                     onChangeText={setName}
                     autoCapitalize="words"
@@ -185,7 +156,7 @@ export default function LoginScreen() {
                 <TextInput
                   style={S.input}
                   placeholder="you@email.com"
-                  placeholderTextColor="rgba(255,255,255,0.35)"
+                  placeholderTextColor={FS.subtext + "88"}
                   value={email}
                   onChangeText={setEmail}
                   autoCapitalize="none"
@@ -199,42 +170,39 @@ export default function LoginScreen() {
                 <TextInput
                   style={S.input}
                   placeholder="••••••••"
-                  placeholderTextColor="rgba(255,255,255,0.35)"
+                  placeholderTextColor={FS.subtext + "88"}
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry
                 />
                 {mode === "login" && (
                   <TouchableOpacity onPress={openForgot}>
-                    <Text style={S.forgotText}>Forgot password</Text>
+                    <Text style={S.forgotText}>Forgot password?</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              {/* Error */}
               {error ? <Text style={S.error}>{error}</Text> : null}
 
               {/* Submit */}
-              <TouchableOpacity onPress={handleSubmit} disabled={loading} activeOpacity={0.85} style={S.btn}>
+              <TouchableOpacity
+                style={[S.submitBtn, loading && { opacity: 0.7 }]}
+                onPress={handleSubmit}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
                 {loading
                   ? <ActivityIndicator color="#fff" />
-                  : <Text style={S.btnText}>{mode === "login" ? "Log in" : "Create Account"}</Text>
+                  : <Text style={S.submitText}>
+                      {mode === "login" ? "Log In" : "Create Account"}
+                    </Text>
                 }
               </TouchableOpacity>
 
-              {/* Divider */}
-              <View style={S.divider}>
-                <View style={S.dividerLine} />
-                <Text style={S.dividerText}>OR</Text>
-                <View style={S.dividerLine} />
-              </View>
-
-              {/* Google */}
-              <TouchableOpacity style={S.googleBtn} onPress={handleGoogle} disabled={loading} activeOpacity={0.85}>
-                <Text style={S.googleBtnText}>Continue with Google</Text>
-              </TouchableOpacity>
+              <Text style={S.disclaimer}>
+                By continuing you agree to receive flood alerts and emergency notifications for your registered area.
+              </Text>
             </View>
-
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -250,20 +218,20 @@ export default function LoginScreen() {
           <Pressable style={S.modalCard} onPress={() => {}}>
             <Text style={S.modalTitle}>Reset Password</Text>
             <Text style={S.modalSubtitle}>
-              Enter your email address and we'll send you a link to reset your password.
+              Enter your email and we'll send a reset link.
             </Text>
 
             {forgotSuccess ? (
               <View style={S.successBox}>
                 <Text style={S.successIcon}>✅</Text>
-                <Text style={S.successText}>Reset link sent! Check your inbox and spam folder.</Text>
+                <Text style={S.successText}>Reset link sent! Check your inbox.</Text>
               </View>
             ) : (
               <>
                 <TextInput
                   style={S.modalInput}
                   placeholder="you@email.com"
-                  placeholderTextColor="rgba(255,255,255,0.35)"
+                  placeholderTextColor={FS.subtext + "88"}
                   value={forgotEmail}
                   onChangeText={setForgotEmail}
                   autoCapitalize="none"
@@ -296,149 +264,117 @@ export default function LoginScreen() {
 }
 
 const S = StyleSheet.create({
-  topBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  brandWrap: {
     alignItems: "center",
-    paddingTop: 16,
-    marginBottom: 8,
+    paddingTop: 48,
+    paddingBottom: 40,
   },
-  logo: { fontSize: 26, fontWeight: "900", color: "#fff", letterSpacing: -0.5 },
+  brandLogo:    { width: 90, height: 90, resizeMode: "contain", marginBottom: 8, borderRadius: 8 },
+  brandName:    { fontSize: 36, fontWeight: "900", color: FS.text, letterSpacing: -1 },
+  brandSub:     { fontSize: 18, fontWeight: "700", color: FS.primary, marginTop: -4, marginBottom: 6 },
+  brandTagline: { fontSize: 12, color: FS.subtext, fontWeight: "600", letterSpacing: 0.5, marginBottom: 12 },
+  brandBadge: {
+    backgroundColor: FS.primaryDim,
+    borderWidth: 1,
+    borderColor: FS.primary + "55",
+    borderRadius: 99,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  brandBadgeText: { fontSize: 11, color: FS.primary, fontWeight: "700" },
+
   toggleWrap: {
     flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderRadius: 14,
+    backgroundColor: FS.surface,
+    borderRadius: 12,
     padding: 4,
-    marginBottom: 28,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: FS.border,
   },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: "center",
-    borderRadius: 10,
-  },
-  toggleActive: {
-    backgroundColor: "rgba(139, 92, 246, 0.55)",
-  },
-  toggleText: { fontWeight: "700", fontSize: 15 },
-  inputWrap: { marginBottom: 16 },
-  inputLabel: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
+  toggleBtn:    { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8 },
+  toggleActive: { backgroundColor: FS.primary },
+  toggleText:   { fontWeight: "700", fontSize: 14 },
+
+  inputWrap:  { marginBottom: 16 },
+  inputLabel: { color: FS.subtext, fontSize: 12, fontWeight: "700", marginBottom: 7, letterSpacing: 0.4 },
   input: {
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: FS.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    color: "#fff",
+    color: FS.text,
     fontSize: 15,
     borderWidth: 1,
-    borderColor: "rgba(167,139,250,0.2)",
+    borderColor: FS.border,
   },
-  forgotText: {
-    color: "rgba(255,255,255,0.45)",
-    fontSize: 12,
-    textAlign: "right",
-    marginTop: 6,
-  },
+  forgotText: { color: FS.subtext, fontSize: 12, textAlign: "right", marginTop: 7 },
+
   error: { color: "#f87171", fontSize: 13, marginBottom: 12, textAlign: "center" },
-  btn: {
-    backgroundColor: "#7c3aed",
+
+  submitBtn: {
+    backgroundColor: FS.primary,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: "center",
     marginTop: 8,
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: FS.primary,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
-  btnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  divider: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 20,
-    gap: 12,
+  submitText: { color: "#fff", fontWeight: "800", fontSize: 16, letterSpacing: 0.3 },
+
+  disclaimer: {
+    fontSize: 11,
+    color: FS.subtext + "99",
+    textAlign: "center",
+    lineHeight: 17,
+    paddingHorizontal: 8,
   },
-  dividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.15)" },
-  dividerText: { color: "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: "600" },
-  googleBtn: {
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  googleBtnText: { color: "#fff", fontWeight: "600", fontSize: 15 },
+
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
+    backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
   },
   modalCard: {
-    backgroundColor: "#1e0a4a",
+    backgroundColor: FS.surface,
     borderRadius: 20,
     padding: 24,
     width: "100%",
     borderWidth: 1,
-    borderColor: "rgba(167,139,250,0.3)",
+    borderColor: FS.border,
   },
-  modalTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "800",
-    marginBottom: 8,
-    letterSpacing: -0.3,
-  },
-  modalSubtitle: {
-    color: "rgba(255,255,255,0.55)",
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 20,
-  },
+  modalTitle:    { color: FS.text, fontSize: 18, fontWeight: "800", marginBottom: 6 },
+  modalSubtitle: { color: FS.subtext, fontSize: 13, lineHeight: 20, marginBottom: 18 },
   modalInput: {
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#0A1628",
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    color: "#fff",
+    color: FS.text,
     fontSize: 15,
     borderWidth: 1,
-    borderColor: "rgba(167,139,250,0.2)",
+    borderColor: FS.border,
     marginBottom: 12,
   },
-  modalError: {
-    color: "#f87171",
-    fontSize: 13,
-    marginBottom: 12,
-  },
+  modalError:   { color: "#f87171", fontSize: 13, marginBottom: 12 },
   modalBtn: {
-    backgroundColor: "#7c3aed",
+    backgroundColor: FS.primary,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     marginBottom: 10,
   },
-  modalBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  modalCancel: {
-    alignItems: "center",
-    paddingVertical: 10,
-  },
-  modalCancelText: { color: "rgba(255,255,255,0.4)", fontSize: 14 },
-  successBox: {
-    alignItems: "center",
-    paddingVertical: 16,
-    gap: 12,
-    marginBottom: 8,
-  },
+  modalBtnText:    { color: "#fff", fontWeight: "700", fontSize: 15 },
+  modalCancel:     { alignItems: "center", paddingVertical: 10 },
+  modalCancelText: { color: FS.subtext, fontSize: 14 },
+  successBox:  { alignItems: "center", paddingVertical: 16, gap: 12, marginBottom: 8 },
   successIcon: { fontSize: 40 },
-  successText: {
-    color: "#34d399",
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 22,
-    fontWeight: "600",
-  },
+  successText: { color: "#34d399", fontSize: 14, textAlign: "center", lineHeight: 22, fontWeight: "600" },
 });

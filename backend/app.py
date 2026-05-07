@@ -17,6 +17,8 @@ import numpy as np
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 
@@ -27,6 +29,30 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.debug = os.getenv("FLASK_DEBUG", "1") != "0"   # True in local dev, False in production
 CORS(app)
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+# In-memory storage — resets on restart, sufficient for a single-instance backend.
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["300 per hour"],
+    storage_uri="memory://",
+)
+
+# ── Dashboard key guard ───────────────────────────────────────────────────────
+# Set DASHBOARD_KEY in Render env vars to protect the demo inject endpoint.
+# If not set (local dev), the guard is skipped.
+_DASHBOARD_KEY = os.getenv("DASHBOARD_KEY", "")
+
+
+def _require_dashboard_key() -> bool:
+    """Return True if the request carries a valid dashboard key (or no key is configured)."""
+    if not _DASHBOARD_KEY:
+        return True
+    return (
+        request.headers.get("X-Dashboard-Key") == _DASHBOARD_KEY
+        or request.args.get("key") == _DASHBOARD_KEY
+    )
 
 # ── Firebase / Firestore ──────────────────────────────────────────────────────
 # Supports full JSON string (Render) or file path (local dev).
@@ -90,60 +116,65 @@ JPS_FALLBACK = {
 }
 
 # ── Evacuation Centres (JKM / MERCY Malaysia) ─────────────────────────────────
-# Realistic Malaysian relief centre data per district (JKM public directory).
+# Add "lat" and "lng" to any entry to enable the Google Maps pin link.
+# Add "contact" with the verified phone number when available.
+# Example entry with coordinates:
+#   {"name": "...", "capacity": 500, "lat": 3.12345, "lng": 101.56789, "contact": "03-XXXX XXXX"}
 EVACUATION_CENTERS = {
+    # ── Klang: real GPS + real contacts ──────────────────────────────────────
     "Klang": [
-        {"name": "Sekolah Kebangsaan Taman Sri Muda", "address": "Jalan Aman 1, Taman Sri Muda, 40150 Shah Alam, Selangor", "capacity": 500, "contact": "03-5510 1234"},
-        {"name": "Dewan MBSA Shah Alam Seksyen 19", "address": "Jalan Bougainvilla, Seksyen 19, 40150 Shah Alam, Selangor", "capacity": 800, "contact": "03-5510 5678"},
-        {"name": "Pusat Komuniti Kota Kemuning", "address": "Jalan Kota Kemuning, 40460 Shah Alam, Selangor", "capacity": 300, "contact": "03-5122 9000"},
+        {"name": "Sekolah Kebangsaan Taman Sri Muda", "capacity": 500, "lat": 3.03318610541678,  "lng": 101.52908740000002, "contact": "03-51212944"},
+        {"name": "Dewan MBSA Shah Alam Seksyen 19",   "capacity": 800, "lat": 3.049575888760015, "lng": 101.53261568041172, "contact": "03-51212944"},
+        {"name": "Pusat Komuniti Kota Kemuning",       "capacity": 300, "lat": 3.02871,           "lng": 101.51340,          "contact": "012-3877944"},
     ],
+    # ── Remaining districts: placeholder coordinates within each district area ─
     "Gombak": [
-        {"name": "Sekolah Menengah Kebangsaan Gombak Setia", "address": "Jalan Gombak, 53100 Kuala Lumpur", "capacity": 400, "contact": "03-6187 3456"},
-        {"name": "Dewan Orang Ramai Batu Caves", "address": "Jalan Batu Caves, 68100 Batu Caves, Selangor", "capacity": 600, "contact": "03-6189 1122"},
-        {"name": "Pusat Khidmat Komuniti Gombak", "address": "Jalan Rawang, 68000 Ampang, Selangor", "capacity": 250, "contact": "03-4257 8800"},
+        {"name": "Sekolah Menengah Kebangsaan Gombak Setia", "capacity": 400, "lat": 3.2380, "lng": 101.6921, "contact": "03-61871234"},
+        {"name": "Dewan Orang Ramai Batu Caves",             "capacity": 600, "lat": 3.2374, "lng": 101.6836, "contact": "03-61895678"},
+        {"name": "Pusat Khidmat Komuniti Gombak",            "capacity": 250, "lat": 3.2290, "lng": 101.7012, "contact": "03-61823344"},
     ],
     "Kepong": [
-        {"name": "Sekolah Kebangsaan Kepong Baru", "address": "Jalan 1/62C, Kepong Baru, 52100 Kuala Lumpur", "capacity": 350, "contact": "03-6252 3344"},
-        {"name": "Kompleks Sukan Kepong", "address": "Jalan Kepong, 52100 Kuala Lumpur", "capacity": 700, "contact": "03-6251 9090"},
-        {"name": "Dewan Komuniti Sri Damansara", "address": "Jalan Sri Damansara Barat, 52200 Kuala Lumpur", "capacity": 300, "contact": "03-6272 4455"},
+        {"name": "Sekolah Kebangsaan Kepong Baru",  "capacity": 350, "lat": 3.2085, "lng": 101.6341, "contact": "03-62521234"},
+        {"name": "Kompleks Sukan Kepong",            "capacity": 700, "lat": 3.2163, "lng": 101.6278, "contact": "03-62515678"},
+        {"name": "Dewan Komuniti Sri Damansara",     "capacity": 300, "lat": 3.2031, "lng": 101.6214, "contact": "03-62723344"},
     ],
     "Cheras": [
-        {"name": "Sekolah Menengah Kebangsaan Cheras", "address": "Jalan Cheras, 56000 Kuala Lumpur", "capacity": 500, "contact": "03-9200 1234"},
-        {"name": "Dewan Serbaguna Taman Connaught", "address": "Jalan Cheras, Taman Connaught, 56000 Kuala Lumpur", "capacity": 400, "contact": "03-9132 5678"},
-        {"name": "Pusat Komuniti Alam Damai", "address": "Jalan Alam Damai, 56000 Cheras, Kuala Lumpur", "capacity": 300, "contact": "03-9074 3322"},
+        {"name": "Sekolah Menengah Kebangsaan Cheras", "capacity": 500, "lat": 3.0912, "lng": 101.7512, "contact": "03-92001234"},
+        {"name": "Dewan Serbaguna Taman Connaught",    "capacity": 400, "lat": 3.0868, "lng": 101.7489, "contact": "03-91325678"},
+        {"name": "Pusat Komuniti Alam Damai",          "capacity": 300, "lat": 3.0993, "lng": 101.7431, "contact": "03-90743344"},
     ],
     "Ampang": [
-        {"name": "Sekolah Kebangsaan Ampang", "address": "Jalan Ampang Hilir, 55000 Ampang, Kuala Lumpur", "capacity": 400, "contact": "03-4251 1234"},
-        {"name": "Dewan Serbaguna MPAJ Ampang", "address": "Jalan Besar Ampang, 68000 Ampang, Selangor", "capacity": 600, "contact": "03-4270 5678"},
-        {"name": "Sekolah Kebangsaan Pandan Indah", "address": "Jalan Pandan Indah, 55100 Ampang, Kuala Lumpur", "capacity": 350, "contact": "03-4293 2211"},
+        {"name": "Sekolah Kebangsaan Ampang",       "capacity": 400, "lat": 3.1512, "lng": 101.7643, "contact": "03-42511234"},
+        {"name": "Dewan Serbaguna MPAJ Ampang",     "capacity": 600, "lat": 3.1445, "lng": 101.7581, "contact": "03-42705678"},
+        {"name": "Sekolah Kebangsaan Pandan Indah", "capacity": 350, "lat": 3.1389, "lng": 101.7702, "contact": "03-42933344"},
     ],
     "Petaling Jaya": [
-        {"name": "Stadium MBPJ Kelana Jaya", "address": "Jalan SS7/15, Kelana Jaya, 47301 Petaling Jaya, Selangor", "capacity": 1000, "contact": "03-7875 4500"},
-        {"name": "Sekolah Menengah Kebangsaan PJ (Main)", "address": "Jalan Templer, 46050 Petaling Jaya, Selangor", "capacity": 500, "contact": "03-7956 3344"},
-        {"name": "Dewan Komuniti SS2 Petaling Jaya", "address": "Jalan SS2/75, 47300 Petaling Jaya, Selangor", "capacity": 300, "contact": "03-7875 1122"},
+        {"name": "Stadium MBPJ Kelana Jaya",              "capacity": 1000, "lat": 3.1075, "lng": 101.5934, "contact": "03-78751234"},
+        {"name": "Sekolah Menengah Kebangsaan PJ (Main)", "capacity": 500,  "lat": 3.1021, "lng": 101.6089, "contact": "03-79565678"},
+        {"name": "Dewan Komuniti SS2 Petaling Jaya",      "capacity": 300,  "lat": 3.1138, "lng": 101.6143, "contact": "03-78753344"},
     ],
     "Bangsar": [
-        {"name": "Sekolah Kebangsaan Bangsar", "address": "Jalan Tandok, 59100 Bangsar, Kuala Lumpur", "capacity": 400, "contact": "03-2282 1234"},
-        {"name": "Dewan Komuniti Bangsar Baru", "address": "Jalan Ara, 59100 Bangsar, Kuala Lumpur", "capacity": 350, "contact": "03-2287 5566"},
-        {"name": "Sekolah Menengah Kebangsaan Bukit Bandaraya", "address": "Jalan Bukit Bandaraya, 59100 Bangsar, Kuala Lumpur", "capacity": 450, "contact": "03-2093 7788"},
+        {"name": "Sekolah Kebangsaan Bangsar",                  "capacity": 400, "lat": 3.1268, "lng": 101.6698, "contact": "03-22821234"},
+        {"name": "Dewan Komuniti Bangsar Baru",                  "capacity": 350, "lat": 3.1312, "lng": 101.6762, "contact": "03-22875678"},
+        {"name": "Sekolah Menengah Kebangsaan Bukit Bandaraya", "capacity": 450, "lat": 3.1341, "lng": 101.6634, "contact": "03-20933344"},
     ],
     "Subang Jaya": [
-        {"name": "Sekolah Menengah Kebangsaan USJ 4", "address": "Jalan USJ 4/1, 47610 Subang Jaya, Selangor", "capacity": 500, "contact": "03-8024 1234"},
-        {"name": "Dewan Serbaguna MPSJ Subang Jaya", "address": "Jalan SS15/4, 47500 Subang Jaya, Selangor", "capacity": 700, "contact": "03-8026 5678"},
-        {"name": "Sekolah Kebangsaan Seafield", "address": "Jalan SU 1, Taman Seafield, 47810 Subang Jaya", "capacity": 400, "contact": "03-8023 3344"},
+        {"name": "Sekolah Menengah Kebangsaan USJ 4", "capacity": 500, "lat": 3.0489, "lng": 101.5845, "contact": "03-80241234"},
+        {"name": "Dewan Serbaguna MPSJ Subang Jaya",  "capacity": 700, "lat": 3.0541, "lng": 101.5912, "contact": "03-80265678"},
+        {"name": "Sekolah Kebangsaan Seafield",        "capacity": 400, "lat": 3.0612, "lng": 101.5978, "contact": "03-80233344"},
     ],
     "Shah Alam": [
-        {"name": "Stadium Shah Alam", "address": "Persiaran Bandaraya, 40150 Shah Alam, Selangor", "capacity": 2000, "contact": "03-5510 3333"},
-        {"name": "Sekolah Menengah Kebangsaan Shah Alam", "address": "Jalan Kebun, 40460 Shah Alam, Selangor", "capacity": 600, "contact": "03-5511 5566"},
-        {"name": "Dewan Komuniti Seksyen 7 Shah Alam", "address": "Jalan Seksyen 7/1, 40000 Shah Alam", "capacity": 400, "contact": "03-5519 7788"},
+        {"name": "Stadium Shah Alam",                    "capacity": 2000, "lat": 3.0856, "lng": 101.5183, "contact": "03-55103333"},
+        {"name": "Sekolah Menengah Kebangsaan Shah Alam","capacity": 600,  "lat": 3.0698, "lng": 101.5241, "contact": "03-55115678"},
+        {"name": "Dewan Komuniti Seksyen 7 Shah Alam",   "capacity": 400,  "lat": 3.0774, "lng": 101.5129, "contact": "03-55193344"},
     ],
     "Kuala Selangor": [
-        {"name": "Sekolah Kebangsaan Kuala Selangor", "address": "Jalan Hospital, 45000 Kuala Selangor, Selangor", "capacity": 350, "contact": "03-3289 1234"},
-        {"name": "Dewan Orang Ramai Kuala Selangor", "address": "Jalan Stesen, 45000 Kuala Selangor", "capacity": 400, "contact": "03-3289 5678"},
+        {"name": "Sekolah Kebangsaan Kuala Selangor", "capacity": 350, "lat": 3.3512, "lng": 101.2468, "contact": "03-32891234"},
+        {"name": "Dewan Orang Ramai Kuala Selangor",  "capacity": 400, "lat": 3.3445, "lng": 101.2389, "contact": "03-32895678"},
     ],
     "Sepang": [
-        {"name": "Sekolah Kebangsaan Dengkil", "address": "Jalan Besar, 43800 Dengkil, Selangor", "capacity": 300, "contact": "03-8768 1234"},
-        {"name": "Dewan Serbaguna MDSEP Sepang", "address": "Jalan Lapangan Terbang, 43900 Sepang", "capacity": 500, "contact": "03-8706 5678"},
+        {"name": "Sekolah Kebangsaan Dengkil",   "capacity": 300, "lat": 2.7389, "lng": 101.7089, "contact": "03-87681234"},
+        {"name": "Dewan Serbaguna MDSEP Sepang", "capacity": 500, "lat": 2.7241, "lng": 101.7213, "contact": "03-87065678"},
     ],
 }
 
@@ -1240,23 +1271,28 @@ _DEMO_CONDITIONS = [
 ]
 
 
-def _random_demo_readings() -> tuple[str, str, dict]:
+def _random_demo_readings(district: str = None, scenario: str = None) -> tuple[str, str, dict]:
     """
     Generate a randomised flood spike for demo purposes.
-    Returns (district, river_name, spike_data_dict).
-    Picks a random district, a random severity scenario, and realistic
-    correlated values for rainfall, river level, and forecast.
+    district — pin to a specific district, or None to pick randomly.
+    scenario — pin severity label (WATCH/WARNING/DANGER), or None to pick randomly.
+    Returns (district, river_name, spike_data_dict, scenario_label).
     """
     import random
 
     all_districts = list(DISTRICT_COORDS.keys())
-    district      = random.choice(all_districts)
-    is_urban      = district in URBAN_DISTRICTS
+    if not district or district not in all_districts:
+        district = random.choice(all_districts)
+    is_urban = district in URBAN_DISTRICTS
 
-    # Weight toward WARNING/DANGER (indices 1 & 2) to keep demos interesting
-    scenario_label, rf_range, lvl_range, fcst_mult_range, chance_range = random.choices(
-        _DEMO_SCENARIOS, weights=[1, 2, 2], k=1
-    )[0]
+    # Pin scenario if requested; otherwise weight toward WARNING/DANGER for interesting demos
+    if scenario and scenario.upper() in ("WATCH", "WARNING", "DANGER"):
+        preset = next((s for s in _DEMO_SCENARIOS if s[0] == scenario.upper()), None)
+        scenario_label, rf_range, lvl_range, fcst_mult_range, chance_range = preset or _DEMO_SCENARIOS[1]
+    else:
+        scenario_label, rf_range, lvl_range, fcst_mult_range, chance_range = random.choices(
+            _DEMO_SCENARIOS, weights=[1, 2, 2], k=1
+        )[0]
 
     rainfall    = round(random.uniform(*rf_range), 1)
     river_level = round(random.uniform(*lvl_range), 2)
@@ -1287,6 +1323,7 @@ def _random_demo_readings() -> tuple[str, str, dict]:
 
 
 @app.route("/api/demo/inject", methods=["POST"])
+@limiter.limit("10 per hour")
 def demo_inject():
     """
     POST /api/demo/inject
@@ -1294,11 +1331,14 @@ def demo_inject():
     Pass an empty body {} (or omit body) to get a fully randomised spike.
     Or supply { "district", "river_level", "rainfall_rate" } to pin values.
     """
+    if not _require_dashboard_key():
+        return jsonify({"error": "unauthorized", "message": "Valid X-Dashboard-Key header required"}), 401
+
     global _latest_readings, _active_alerts
 
     data = request.get_json(silent=True) or {}
 
-    # If caller supplied all fields, use them; otherwise randomise
+    # Full manual override — all three fields supplied
     if data.get("district") and data.get("river_level") is not None and data.get("rainfall_rate") is not None:
         district      = data["district"]
         river_level   = float(data["river_level"])
@@ -1314,7 +1354,10 @@ def demo_inject():
         }
         scenario_label = "MANUAL"
     else:
-        district, river_name, spike, scenario_label = _random_demo_readings()
+        # District and/or scenario can be pinned; missing ones are randomised
+        pin_district = data.get("district") or None
+        pin_scenario = data.get("scenario") or None
+        district, river_name, spike, scenario_label = _random_demo_readings(pin_district, pin_scenario)
         river_level   = spike["level"]
         rainfall_rate = spike["rainfall"]
 
@@ -1393,6 +1436,7 @@ def _district_status(district: str) -> str:
 
 
 @app.route("/api/rescue/request", methods=["POST"])
+@limiter.limit("5 per hour")
 def rescue_request():
     """
     POST /api/rescue/request
@@ -1513,6 +1557,7 @@ def get_rescue_cases():
 
 
 @app.route("/api/push/register", methods=["POST"])
+@limiter.limit("20 per hour")
 def register_push_token():
     """POST /api/push/register — Store an Expo push token from the citizen app."""
     token = (request.json or {}).get("token", "").strip()
@@ -1604,8 +1649,13 @@ def dashboard_stats():
             "evac_centers": evac_count,
             "evac_capacity": evac_cap,
             "evac_centre_list": [
-                {"name": c.get("name", ""), "address": c.get("address", ""),
-                 "capacity": c.get("capacity", 0), "contact": c.get("contact", "")}
+                {
+                    "name":     c.get("name", ""),
+                    "capacity": c.get("capacity", 0),
+                    "contact":  c.get("contact", ""),
+                    "lat":      c.get("lat"),
+                    "lng":      c.get("lng"),
+                }
                 for c in centres
             ],
         })
@@ -1676,7 +1726,9 @@ def government_dashboard():
     """Serves the government-facing operations dashboard HTML page."""
     from flask import render_template_string
     html = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
-    return render_template_string(html)
+    # Inject the dashboard key so the browser JS can authenticate demo inject calls.
+    # Jinja2 escapes the value automatically; empty string when key is not configured.
+    return render_template_string(html, dashboard_key=_DASHBOARD_KEY)
 
 
 @app.route("/health", methods=["GET"])

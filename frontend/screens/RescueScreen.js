@@ -250,8 +250,8 @@ export default function RescueScreen({ navigation }) {
               ? <ActivityIndicator color={FS.primary} size="small" />
               : <Text style={[styles.gpsBtnText, coords && { color: FS.safe }]}>
                   {coords
-                    ? `📡 GPS Locked · ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
-                    : "📡 Share My Location (helps rescuers find you)"}
+                    ? `GPS Locked · ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
+                    : "Share My Location (helps rescuers find you)"}
                 </Text>
             }
           </TouchableOpacity>
@@ -267,9 +267,8 @@ export default function RescueScreen({ navigation }) {
           )}
           <View style={styles.chipGrid}>
             {DISTRICTS.map((d) => {
-              const st      = districtStatuses[d];
-              const stColor = st ? STATUS_COLOR[st] : null;
-              const isSafe  = st === "SAFE";
+              const st     = districtStatuses[d];
+              const isSafe = st === "SAFE";
               const isSelected = district === d;
               return (
                 <TouchableOpacity

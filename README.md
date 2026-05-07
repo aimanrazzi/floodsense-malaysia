@@ -1,19 +1,19 @@
-# Combat. — AI-Powered Scam Detector
+# FloodSense Malaysia
 
-A mobile application that helps Malaysians detect scams in real time using AI, government databases, and threat intelligence APIs.
+**Agentic AI Flood Early Warning System for Kuala Lumpur & Selangor**
+
+Real-time flood monitoring, 1–2 hour advance warnings, AI-powered risk classification, SOS rescue coordination, and a government operations dashboard — all in one full-stack system.
 
 ---
 
-## Features
+## What It Does
 
-- **Text Analysis** — Paste any suspicious message, phone number, URL, email, or bank account number
-- **Screenshot Analysis** — Upload or photograph a suspicious message for AI vision analysis
-- **QR Code Scanner** — Scan QR codes to check embedded URLs instantly
-- **Profile Checker** — Upload a profile photo to detect AI-generated, stock photos, or public figure impersonation
-- **Scan History** — All scans saved to cloud (Firebase) for signed-in users, or locally for guests
-- **Community Reports** — Users can report confirmed scams; counts shown alongside AI verdict
-- **Multi-language** — English, Bahasa Malaysia, Chinese (Simplified), Tamil
-- **Dark / Light Theme**
+- **Proactive flood warnings** — Combines live JPS river gauge data, WeatherAPI radar + 2-hour forecast, and Isolation Forest ML anomaly detection to warn 1–2 hours *before* critical thresholds are breached
+- **Dual flood model** — Separate logic for urban flash floods (rainfall-driven, KL drainage thresholds) and rural river overflow (JPS level thresholds)
+- **Claude AI reasoning** — When the ML model flags an anomaly or a storm is incoming, Claude Haiku 4.5 produces a natural-language risk assessment with specific recommended actions
+- **SOS rescue coordination** — Citizens submit geo-located rescue requests; an AI priority scoring algorithm ranks them for government dispatch
+- **Government dashboard** — Live web ops centre with AI reasoning banner, storm cell warnings, SOS priority queue, and real-time agent communications feed
+- **4-language mobile app** — English, Bahasa Malaysia, 中文, தமிழ் with Expo push notifications for WARNING/DANGER alerts
 
 ---
 
@@ -21,76 +21,94 @@ A mobile application that helps Malaysians detect scams in real time using AI, g
 
 | Layer | Technology |
 |---|---|
-| Mobile Frontend | React Native + Expo SDK 54 |
-| Backend API | Python Flask, deployed on Render |
-| AI (Text) | Groq `llama-3.3-70b-versatile` |
-| AI (Vision) | Groq `meta-llama/llama-4-scout-17b-16e-instruct` |
+| Backend | Python 3.11 / Flask 3.x |
+| Agent pipeline | APScheduler (60-second autonomous loop) |
+| ML model | scikit-learn IsolationForest |
+| AI reasoning | Anthropic Claude Haiku 4.5 |
+| Rainfall data | WeatherAPI.com (live + 2h forecast) |
+| River levels | JPS Water Level API (info.water.gov.my) |
 | Database | Firebase Firestore |
 | Auth | Firebase Authentication |
-| Scam Registry | PDRM Semak Mule (official Malaysian gov API) |
-| URL/IP Threat | VirusTotal API |
-| Phone Validation | NumVerify API |
-| Social Handle | SerpAPI |
+| Rate limiting | flask-limiter |
+| Production server | gunicorn |
+| Cloud hosting | Render.com |
+| Mobile app | React Native + Expo SDK |
+| GPS | expo-location |
+| Push notifications | expo-notifications (Expo push) |
 
 ---
 
 ## Project Structure
 
 ```
-scam-detector/
-├── frontend/                   React Native (Expo) app
-│   ├── screens/                App screens
-│   ├── context/                Auth, Theme, Language providers
-│   ├── utils/                  API helper, translations
-│   └── firebase.js             Firebase init
-│
+floodsense-malaysia/
 ├── backend/
-│   ├── app.py                  Flask API — all AI and external API logic
-│   └── requirements.txt        Python dependencies
-│
-└── render.yaml                 Render deployment config
+│   ├── app.py              Main Flask app — 5-agent pipeline + all API endpoints
+│   ├── dashboard.html      Government operations dashboard (served by Flask)
+│   ├── requirements.txt    Python dependencies
+│   └── data/               ML training CSVs + rainfall cache (gitignored)
+├── frontend/
+│   ├── App.js              Navigation + Firebase auth state
+│   ├── app.json            Expo config (package ID, EAS project)
+│   ├── config.js           Backend URL (local vs production)
+│   ├── firebase.js         Firebase Auth init
+│   ├── context/
+│   │   ├── ThemeContext.js
+│   │   └── LanguageContext.js
+│   ├── screens/
+│   │   ├── LoginScreen.js       Auth (login, signup, forgot password)
+│   │   ├── HomeScreen.js        Flood map — flash flood + river overflow tabs
+│   │   ├── AlertDetailScreen.js Per-district AI analysis
+│   │   ├── RescueScreen.js      SOS rescue request form
+│   │   ├── RescuerScreen.js     Rescuer case management
+│   │   ├── EvacuationScreen.js  Nearest evacuation centres
+│   │   └── SplashScreen.js      Loading screen
+│   └── utils/
+│       ├── api.js               All backend API calls
+│       └── translations.js      EN / MY / ZH / TA strings
+├── render.yaml             Render.com deployment config
+└── .gitignore
 ```
 
 ---
 
-## Setup & Running Locally
+## Running Locally
 
 ### Prerequisites
 
-- Node.js 18+
 - Python 3.10+
-- Expo CLI (`npm install -g expo-cli`)
-- EAS CLI (`npm install -g eas-cli`)
-
----
+- Node.js 18+
+- Expo Go app on your phone (for the mobile app demo)
 
 ### Backend
 
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in `backend/`:
+Create `backend/.env`:
 
 ```env
-GROQ_API_KEY=your_groq_api_key
-VIRUSTOTAL_API_KEY=your_virustotal_key
-NUMVERIFY_API_KEY=your_numverify_key
-SERPAPI_KEY=your_serpapi_key
-IMGBB_API_KEY=your_imgbb_key
+ANTHROPIC_API_KEY=sk-ant-...
+WEATHERAPI_KEY=your_weatherapi_key
 FIREBASE_CREDENTIALS=/path/to/serviceAccount.json
+FLASK_DEBUG=1
+# DASHBOARD_KEY=optional_secret   # leave blank for local dev
 ```
 
-Run the server:
+Start the backend:
 
 ```bash
 python app.py
 ```
 
----
+Server runs at `http://localhost:5000`. The government dashboard is at `http://localhost:5000/dashboard`.
+
+On first run, the ML model trains and saves to `flood_model.pkl`. Subsequent starts load it instantly.
 
 ### Frontend
 
@@ -99,10 +117,10 @@ cd frontend
 npm install
 ```
 
-Create `frontend/config.js`:
+Update `frontend/config.js` with your machine's local IP:
 
 ```js
-export const BACKEND_URL = "http://YOUR_LOCAL_IP:5000";
+export const BACKEND_URL = "http://YOUR_LAN_IP:5000";
 ```
 
 Start the app:
@@ -111,48 +129,99 @@ Start the app:
 npx expo start
 ```
 
-Scan the QR code with **Expo Go** (Android/iOS).
+Scan the QR code with **Expo Go** on your phone. Both phone and computer must be on the same Wi-Fi network.
 
 ---
 
-## Building the APK
+## Deployment (Production)
+
+### Backend — Render.com
+
+1. Push the repo to GitHub
+2. Create a new **Web Service** on [render.com](https://render.com)
+3. Set the following environment variables in the Render dashboard:
+
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude AI API key (Anthropic console) |
+| `WEATHERAPI_KEY` | WeatherAPI.com key (free tier: 1M calls/month) |
+| `FIREBASE_CREDENTIALS_JSON` | Full Firebase service account JSON as a string |
+| `FLASK_DEBUG` | Set to `0` for production |
+| `DASHBOARD_KEY` | Secret key to protect the demo inject endpoint |
+
+4. Build command: `pip install -r requirements.txt`
+5. Start command: `gunicorn app:app`
+
+### Frontend — Update backend URL
+
+Once Render gives you a URL, update `frontend/config.js`:
+
+```js
+export const BACKEND_URL = "https://floodsense-malaysia.onrender.com";
+```
+
+### Android APK (optional, for demo without Expo Go)
 
 ```bash
 cd frontend
 npx eas build --profile preview --platform android
 ```
 
-Download the `.apk` from the EAS dashboard and install on any Android device.
+Requires an Expo account. Build takes ~15–30 minutes in the cloud.
 
 ---
 
-## Deployment (Production)
+## API Endpoints
 
-**Backend:** Deployed on Render. Set all API keys as environment variables in the Render dashboard. Use `FIREBASE_CREDENTIALS_JSON` (full JSON string) instead of a file path.
-
-**Frontend:** OTA updates via EAS Update. New APK only needed when native dependencies change.
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/flood/levels` | Live readings for all 11 KL/Selangor districts |
+| POST | `/api/flood/analyze` | On-demand ML + Claude analysis |
+| GET | `/api/flood/alerts` | 20 most recent alerts |
+| GET | `/api/flood/evacuate?district=X` | Evacuation centres |
+| POST | `/api/rescue/request` | Submit SOS rescue request |
+| GET | `/api/rescue/cases` | All active rescue cases |
+| POST | `/api/rescue/dispatch/<id>` | Mark case as dispatched |
+| POST | `/api/rescue/resolve/<id>` | Mark case as resolved |
+| POST | `/api/push/register` | Register Expo push token |
+| GET | `/api/dashboard/stats` | Aggregated dashboard data |
+| POST | `/api/demo/inject` | Demo flood spike (key-guarded) |
+| GET | `/dashboard` | Government operations dashboard |
+| GET | `/health` | Service liveness check |
 
 ---
 
-## Environment Variables (Render)
+## The 5-Agent Pipeline
 
-| Variable | Description |
-|---|---|
-| `GROQ_API_KEY` | Groq AI API key |
-| `VIRUSTOTAL_API_KEY` | VirusTotal API key |
-| `NUMVERIFY_API_KEY` | NumVerify phone validation key |
-| `SERPAPI_KEY` | SerpAPI key |
-| `IMGBB_API_KEY` | ImgBB image hosting key |
-| `FIREBASE_CREDENTIALS_JSON` | Full Firebase service account JSON as a string |
+Every 60 seconds, the backend runs an autonomous pipeline:
+
+```
+DataAgent (COLLECT)
+  → ForecastAgent (PREDICT)
+    → AnalysisAgent (DETECT anomalies via Isolation Forest)
+      → DecisionAgent (CLASSIFY via Claude AI or rule-based)
+        → ActionAgent (ACT — alerts, push, Firestore)
+```
+
+All inter-agent messages are logged and visible in the government dashboard's real-time comms feed.
 
 ---
 
 ## Security
 
-- **Firebase Token Verification** — Every API request requires a valid Firebase ID token (Bearer token in Authorization header)
-- **Rate Limiting** — 20 requests/min on `/analyze`, 10 requests/min on `/check-profile`, 500 requests/day per IP
-- **Firestore Rules** — Users can only read/write their own scan history
-- **No secrets in code** — All API keys stored in environment variables, never committed to git
+- **Rate limiting** — 300 req/hr default; 10/hr demo inject; 5/hr SOS; 20/hr push register
+- **Dashboard key guard** — `DASHBOARD_KEY` env var protects the demo inject endpoint
+- **SOS zone gate** — Rescue requests only accepted from WATCH/WARNING/DANGER zones; GPS-verified
+- **No secrets in code** — All API keys via environment variables only
+- **Graceful degradation** — JPS down → static fallback; WeatherAPI down → file cache; Claude down → rule-based
+
+---
+
+## Monitored Districts
+
+9 urban flash flood zones (rainfall threshold): Klang, Gombak, Kepong, Cheras, Ampang, Petaling Jaya, Bangsar, Subang Jaya, Shah Alam
+
+2 river overflow zones (JPS level threshold): Kuala Selangor, Sepang
 
 ---
 

@@ -56,9 +56,11 @@ export default function EvacuationScreen({ route, navigation }) {
     Linking.openURL(`tel:${contact.replace(/\s/g, "")}`);
   };
 
-  const openMaps = (address) => {
-    const encoded = encodeURIComponent(address);
-    Linking.openURL(`https://maps.google.com/?q=${encoded}`);
+  const openMaps = (centre) => {
+    const url = (centre.lat && centre.lng)
+      ? `https://maps.google.com/?q=${centre.lat},${centre.lng}&z=17`
+      : `https://maps.google.com/?q=${encodeURIComponent(centre.name + " Malaysia")}`;
+    Linking.openURL(url);
   };
 
   return (
@@ -156,17 +158,19 @@ export default function EvacuationScreen({ route, navigation }) {
                 )}
               </View>
 
-              {/* Address */}
-              <View style={styles.addressRow}>
-                <Text style={styles.addressIcon}>📍</Text>
-                <Text style={styles.addressText}>{centre.address}</Text>
-              </View>
+              {/* Address — only shown when present */}
+              {centre.address ? (
+                <View style={styles.addressRow}>
+                  <Text style={styles.addressIcon}>📍</Text>
+                  <Text style={styles.addressText}>{centre.address}</Text>
+                </View>
+              ) : null}
 
               {/* Action buttons */}
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={styles.actionBtn}
-                  onPress={() => openMaps(centre.address)}
+                  onPress={() => openMaps(centre)}
                 >
                   <Text style={styles.actionBtnText}>🗺 Get Directions</Text>
                 </TouchableOpacity>

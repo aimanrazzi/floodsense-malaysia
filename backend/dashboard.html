@@ -6,13 +6,19 @@
   <title>FloodSense Malaysia — Government Operations Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background: #0a1628; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-    .card  { background: #0f2440; border: 1px solid #1e3a5f; border-radius: 12px; padding: 16px; }
+    body { background: #0a1628; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+    .card  { background: #0f2440; border: 1px solid #1e3a5f; border-radius: 12px; padding: 18px; }
+    h1 { font-size: 1.35rem !important; }
+    h2 { font-size: 1rem !important; letter-spacing: -0.3px; }
+    table { font-size: 13px; }
+    #districtTable th { font-size: 12px; }
+    #districtTable td { font-size: 13px; padding-top: 7px !important; padding-bottom: 7px !important; }
+    .sos-card { font-size: 13px; }
     .badge-DANGER  { background:#dc262622; color:#f87171; border:1px solid #dc2626; }
     .badge-WARNING { background:#d9770622; color:#fbbf24; border:1px solid #d97706; }
     .badge-WATCH   { background:#eab30822; color:#fde68a; border:1px solid #eab308; }
     .badge-SAFE    { background:#16a34a22; color:#4ade80; border:1px solid #16a34a; }
-    .agent-from { font-size:11px; font-weight:700; padding:2px 7px; border-radius:99px; }
+    .agent-from { font-size:12px; font-weight:700; padding:3px 9px; border-radius:99px; }
     .ag-Data      { background:#1e3a5f; color:#93c5fd; }
     .ag-Forecast  { background:#1a2a4a; color:#a5b4fc; }
     .ag-Analysis  { background:#1e2a4a; color:#c4b5fd; }
@@ -51,9 +57,56 @@
     ::-webkit-scrollbar { width:6px; }
     ::-webkit-scrollbar-track { background:#0a1628; }
     ::-webkit-scrollbar-thumb { background:#1e3a5f; border-radius:3px; }
+    .demo-sev-btn { padding:4px 6px; border-radius:8px; font-size:10px; font-weight:700; border:1px solid #334155; background:transparent; color:#64748b; cursor:pointer; transition:all 0.15s; }
+    .demo-sev-btn.sev-active { background:#4c1d95; color:#c4b5fd; border-color:#7c3aed; }
+    .demo-sev-btn:not(.sev-active):hover { border-color:#475569; color:#94a3b8; }
   </style>
 </head>
 <body class="min-h-screen p-4">
+
+  <!-- Demo Inject Modal -->
+  <div class="modal-overlay hidden" id="demoModal">
+    <div class="modal-box" style="max-width:420px">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold text-white">🎯 Inject Demo Flood Spike</h3>
+        <button onclick="closeDemoModal()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-4 leading-relaxed">Simulates a flood event for the selected district. Triggers Claude AI risk assessment and sends push notifications to registered phones if risk is WARNING or DANGER.</p>
+      <div class="mb-3">
+        <label class="text-xs text-slate-400 block mb-1">District</label>
+        <select id="demoDistrict" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2">
+          <option value="">Random district</option>
+          <option value="Klang">Klang — Flash Flood Zone</option>
+          <option value="Gombak">Gombak — Flash Flood Zone</option>
+          <option value="Kepong">Kepong — Flash Flood Zone</option>
+          <option value="Cheras">Cheras — Flash Flood Zone</option>
+          <option value="Ampang">Ampang — Flash Flood Zone</option>
+          <option value="Petaling Jaya">Petaling Jaya — Flash Flood Zone</option>
+          <option value="Bangsar">Bangsar — Flash Flood Zone</option>
+          <option value="Subang Jaya">Subang Jaya — Flash Flood Zone</option>
+          <option value="Shah Alam">Shah Alam — Flash Flood Zone</option>
+          <option value="Kuala Selangor">Kuala Selangor — River Overflow Zone</option>
+          <option value="Sepang">Sepang — River Overflow Zone</option>
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="text-xs text-slate-400 block mb-1">Severity</label>
+        <div class="grid grid-cols-4 gap-2">
+          <button class="demo-sev-btn sev-active" data-sev="" onclick="setSev(this,'')">🎲 Random</button>
+          <button class="demo-sev-btn" data-sev="WATCH"   onclick="setSev(this,'WATCH')">🟡 Watch</button>
+          <button class="demo-sev-btn" data-sev="WARNING" onclick="setSev(this,'WARNING')">🟠 Warning</button>
+          <button class="demo-sev-btn" data-sev="DANGER"  onclick="setSev(this,'DANGER')">🔴 Danger</button>
+        </div>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeDemoModal()" class="text-xs text-slate-400 px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500">Cancel</button>
+        <button onclick="confirmDemo()" id="demoConfirmBtn"
+          class="text-xs font-bold px-4 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 text-white">
+          🎯 Inject Spike
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Resolve Modal -->
   <div class="modal-overlay hidden" id="resolveModal">
@@ -116,14 +169,14 @@
   <!-- Header -->
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
-      <span class="text-2xl">💧</span>
+      <img src="/static/logo (2).png" alt="FloodSense" style="width:50px;height:50px;object-fit:contain;border-radius:8px;" onerror="this.style.display='none'" />
       <div>
         <h1 class="text-xl font-bold text-white">FloodSense Malaysia</h1>
         <p class="text-xs text-slate-400">Government Operations Dashboard · Agentic AI Early Warning System · KL / Selangor</p>
       </div>
     </div>
     <div class="flex items-center gap-3 flex-wrap">
-      <button onclick="triggerDemo()" id="demoBtn"
+      <button onclick="openDemoModal()"
         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-purple-800 hover:bg-purple-700 text-purple-200 border border-purple-600 transition-colors">
         🎯 Demo Spike
       </button>
@@ -149,8 +202,8 @@
   <div class="card mb-4" id="aiBanner">
     <div class="flex items-start justify-between gap-3 mb-2">
       <div class="flex-1 min-w-0">
-        <div class="text-xs text-slate-400 mb-1">🤖 AI Decision Agent (Claude AI) — Real-time Situational Awareness</div>
-        <div class="text-sm font-semibold leading-snug" id="aiReasoning" style="color:#e2e8f0">Waiting for assessment…</div>
+        <div class="text-xs text-slate-400 mb-1 font-semibold uppercase tracking-wider">Current Situation Summary</div>
+        <div class="text-base font-semibold leading-snug" id="aiReasoning" style="color:#e2e8f0">Waiting for assessment…</div>
       </div>
       <div class="text-right shrink-0">
         <div class="text-xs text-slate-500">Confidence</div>
@@ -180,7 +233,7 @@
     <div class="lg:col-span-2 space-y-4">
       <div class="card">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="text-sm font-bold text-white">📍 District Status</h2>
+          <h2 class="text-sm font-bold text-white"> District Status</h2>
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-xs text-slate-500">Filter:</span>
             <button class="filter-btn active-ALL" data-filter="ALL" onclick="setFilter('ALL')">All</button>
@@ -243,9 +296,9 @@
           <span class="agent-from ag-Decision">DecisionAgent</span>
           <span class="agent-from ag-Action">ActionAgent</span>
         </div>
-        <p class="mt-2 text-slate-600 leading-relaxed">Each agent passes enriched data to the next. DataAgent fetches live sensor readings → ForecastAgent predicts storm arrival → AnalysisAgent detects anomalies via Isolation Forest → DecisionAgent classifies risk using Claude AI → ActionAgent triggers alerts, evacuations &amp; push notifications.</p>
+        <p class="mt-2 text-slate-600 leading-relaxed" style="color: whitesmoke;">Each agent passes enriched data to the next. DataAgent fetches live sensor readings → ForecastAgent predicts storm arrival → AnalysisAgent detects anomalies via Isolation Forest → DecisionAgent classifies risk using Claude AI → ActionAgent triggers alerts, evacuations &amp; push notifications.</p>
       </div>
-      <div class="overflow-y-auto flex-1 space-y-2" id="agentFeed"></div>
+      <div class="overflow-y-auto flex-1 space-y-2.5" id="agentFeed"></div>
     </div>
 
   </div>
@@ -371,7 +424,7 @@ function renderDistricts(districts) {
     return;
   }
   tbody.innerHTML = filtered.map(d => {
-    const icon   = d.flood_type === 'flash_flood' ? '⚡' : '🌊';
+    const typeLabel = d.flood_type === 'flash_flood' ? 'Flash Flood' : 'River Overflow';
     const trend  = d.trend === 'rising' ? '⬆' : d.trend === 'easing' ? '⬇' : '→';
     const tColor = d.trend === 'rising' ? '#fbbf24' : d.trend === 'easing' ? '#4ade80' : '#94a3b8';
     const evac   = d.evac_centers > 0
@@ -380,7 +433,7 @@ function renderDistricts(districts) {
     return `
       <tr class="row-${d.status} hover:bg-slate-800/30 transition-colors">
         <td class="py-2 pl-2 font-semibold text-white">${d.district}</td>
-        <td class="py-2 text-slate-400">${icon}</td>
+        <td class="py-2 text-slate-400">${typeLabel}</td>
         <td class="py-2 text-right text-blue-300">${(d.rainfall||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
         <td class="py-2 text-right" style="color:${tColor}">${trend} ${(d.forecast_2h||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
         <td class="py-2 text-right text-cyan-300">${(d.river_level||0).toFixed(1)}<span class="text-slate-500">m</span></td>
@@ -499,16 +552,16 @@ function renderAgentFeed(comms) {
     else if (p.actions)
       detail = p.actions.join(' · ');
     return `
-      <div class="bg-slate-900/60 rounded-lg p-2.5 border border-slate-800">
-        <div class="flex items-center gap-2 mb-1 flex-wrap">
+      <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-800">
+        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
           <span class="agent-from ${agClass}">${m.from}</span>
-          <span class="text-slate-600 text-xs">→</span>
-          <span class="text-slate-400 text-xs">${m.to}</span>
-          <span class="ml-auto text-slate-600 text-xs">${m.timestamp}</span>
+          <span class="text-slate-500 text-xs">→</span>
+          <span class="text-slate-300 text-xs font-semibold">${m.to}</span>
+          <span class="ml-auto text-slate-500 text-xs">${m.timestamp}</span>
         </div>
-        <p class="text-xs text-slate-300 font-medium">${m.summary}</p>
-        ${detail ? `<p class="text-xs text-slate-500 mt-0.5">${detail}</p>` : ''}
-        ${desc ? `<p class="text-xs text-slate-700 mt-1 italic leading-relaxed">${desc}</p>` : ''}
+        <p class="text-sm text-slate-200 font-semibold leading-snug">${m.summary}</p>
+        ${detail ? `<p class="text-xs text-slate-400 mt-1">${detail}</p>` : ''}
+        ${desc ? `<p class="text-xs text-slate-600 mt-1 italic leading-relaxed">${desc}</p>` : ''}
       </div>`;
   }).join('');
 }
@@ -526,18 +579,18 @@ function renderEvacSummary(districts) {
     return;
   }
   el.innerHTML = centres.map(c => {
-    const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(c.address)}`;
     const statusBorder = c.status === 'DANGER' ? 'border-red-900' : c.status === 'WARNING' ? 'border-yellow-900' : 'border-slate-700';
+    const mapsLink = (c.lat && c.lng)
+      ? `<a href="https://maps.google.com/?q=${c.lat},${c.lng}&z=17" target="_blank"
+            class="text-xs text-blue-400 hover:text-blue-300 mt-0.5">📍 View on map</a>`
+      : '';
     return `
       <div class="bg-slate-900/50 rounded-lg p-2.5 border ${statusBorder} flex flex-col gap-1">
         <div class="text-xs font-bold text-white leading-tight">${c.name}</div>
         <div class="text-xs text-slate-400 leading-tight">${c.district}</div>
         <div class="text-xs text-green-400">${(c.capacity||0).toLocaleString()} capacity</div>
-        ${c.contact ? `<div class="text-xs text-slate-500">${c.contact}</div>` : ''}
-        <a href="${mapsUrl}" target="_blank"
-           class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-0.5">
-          📍 View location
-        </a>
+        ${c.contact ? `<div class="text-xs text-slate-500">📞 ${c.contact}</div>` : ''}
+        ${mapsLink}
       </div>`;
   }).join('');
 }
@@ -607,23 +660,47 @@ function showToast(msg, color) {
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 4000);
 }
 
-async function triggerDemo() {
-  const btn = document.getElementById('demoBtn');
-  btn.textContent = '⏳ Injecting…';
-  btn.disabled = true;
+const DASHBOARD_KEY = '{{ dashboard_key }}';
+let _demoSeverity = '';
+
+function openDemoModal() {
+  document.getElementById('demoDistrict').value = '';
+  setSev(document.querySelector('.demo-sev-btn[data-sev=""]'), '');
+  document.getElementById('demoModal').classList.remove('hidden');
+}
+function closeDemoModal() {
+  document.getElementById('demoModal').classList.add('hidden');
+}
+function setSev(btn, val) {
+  _demoSeverity = val;
+  document.querySelectorAll('.demo-sev-btn').forEach(b => b.classList.remove('sev-active'));
+  btn.classList.add('sev-active');
+}
+
+async function confirmDemo() {
+  const district = document.getElementById('demoDistrict').value;
+  const confirmBtn = document.getElementById('demoConfirmBtn');
+  confirmBtn.textContent = '⏳ Injecting…';
+  confirmBtn.disabled = true;
   try {
-    const res = await fetch('/api/demo/inject', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const headers = { 'Content-Type': 'application/json' };
+    if (DASHBOARD_KEY) headers['X-Dashboard-Key'] = DASHBOARD_KEY;
+    const body = {};
+    if (district)       body.district = district;
+    if (_demoSeverity)  body.scenario = _demoSeverity;
+    const res = await fetch('/api/demo/inject', { method: 'POST', headers, body: JSON.stringify(body) });
     const d = await res.json();
+    if (!res.ok) { showToast(`⚠ ${d.message || 'Injection failed'}`, '#3b0707'); return; }
     const rl    = d.assessment?.risk_level || '?';
     const color = rl === 'DANGER' ? '#7f1d1d' : rl === 'WARNING' ? '#422006' : '#1e3a5f';
-    showToast(`🎯 Demo [${d.scenario}]: ${d.district} — ${d.rainfall_rate}mm/hr · ${rl} risk`, color);
+    showToast(`🎯 [${d.scenario}] ${d.district} — ${d.rainfall_rate}mm/hr · ${rl} risk`, color);
+    closeDemoModal();
     await refresh();
   } catch(e) {
     showToast('⚠ Demo injection failed — is the backend running?', '#3b0707');
   } finally {
-    btn.textContent = '🎯 Demo Spike';
-    btn.disabled = false;
+    confirmBtn.textContent = '🎯 Inject Spike';
+    confirmBtn.disabled = false;
   }
 }
 

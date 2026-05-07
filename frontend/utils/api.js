@@ -38,19 +38,6 @@ export const floodApi = {
     get(`/api/flood/evacuate${district ? `?district=${encodeURIComponent(district)}` : ""}`),
 
   /**
-   * Bypass the 60-second scheduler for demo — inject a spike immediately.
-   * @param {string} district
-   * @param {number} riverLevel   metres
-   * @param {number} rainfallRate mm/hr
-   */
-  demoInject: (district, riverLevel, rainfallRate) =>
-    post("/api/demo/inject", {
-      district,
-      river_level: riverLevel,
-      rainfall_rate: rainfallRate,
-    }),
-
-  /**
    * Submit a rescue / help request on behalf of a citizen in distress.
    * Returns { case_id, message, nearest_centre, emergency_contacts }.
    */
