@@ -23,7 +23,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -1124,27 +1123,41 @@ def run_flood_agent() -> None:
         logger.error(f"[Pipeline] Cycle failed: {e}\n{traceback.format_exc()}")
 
 
-# ── APScheduler: 60-second Background Loop ────────────────────────────────────
-def _keepalive_ping() -> None:
-    """Ping own health endpoint every 10 min to prevent Render free-tier spin-down."""
-    try:
-        import urllib.request
-        own_url = os.environ.get("RENDER_EXTERNAL_URL", "https://floodsense-malaysia.onrender.com").rstrip("/")
-        urllib.request.urlopen(f"{own_url}/health", timeout=10)
-        logger.info("[Keepalive] Self-ping OK")
-    except Exception as e:
-        logger.warning(f"[Keepalive] Ping failed: {e}")
+# ── Background Pipeline Loop ──────────────────────────────────────────────────
+# Plain daemon thread — more reliable than APScheduler under gunicorn's gthread model.
+# Runs the flood pipeline every 60 s and pings the health endpoint every 10 min
+# to prevent Render free-tier spin-down.
 
-_scheduler = BackgroundScheduler(daemon=True)
-_scheduler.add_job(run_flood_agent, "interval", seconds=60, id="flood_agent")
-_scheduler.add_job(_keepalive_ping, "interval", seconds=600, id="keepalive")  # every 10 min
+import threading
 
-# Flask debug mode runs two processes (parent reloader + child worker).
-# Only start the scheduler in the child (WERKZEUG_RUN_MAIN=true) or in production.
+def _background_loop() -> None:
+    _ping_interval = 600  # keepalive every 10 min
+    _ping_counter  = 0
+
+    while True:
+        time.sleep(60)
+        run_flood_agent()
+
+        _ping_counter += 60
+        if _ping_counter >= _ping_interval:
+            _ping_counter = 0
+            try:
+                import urllib.request
+                own_url = os.environ.get(
+                    "RENDER_EXTERNAL_URL",
+                    "https://floodsense-malaysia.onrender.com",
+                ).rstrip("/")
+                urllib.request.urlopen(f"{own_url}/health", timeout=10)
+                logger.info("[Keepalive] Self-ping OK")
+            except Exception as e:
+                logger.warning(f"[Keepalive] Ping failed: {e}")
+
+# Guard against double-start in Werkzeug reloader (parent process)
 if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    _scheduler.start()
-    logger.info("[Scheduler] Started in process %s", os.getpid())
-    run_flood_agent()  # initial cycle so the app isn't empty on first request
+    run_flood_agent()  # initial cycle — data ready before first request
+    _t = threading.Thread(target=_background_loop, daemon=True, name="flood-pipeline")
+    _t.start()
+    logger.info("[Pipeline] Background loop started in process %s", os.getpid())
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
