@@ -840,6 +840,7 @@ def _rule_based_fallback(readings: dict) -> dict:
 # ── In-memory State ───────────────────────────────────────────────────────────
 _active_alerts:   list = []
 _latest_readings: dict = {}
+_demo_expiry:     float = 0.0   # epoch time after which demo-injected readings are cleared
 _agent_comms:     list = []   # rolling log of inter-agent messages for dashboard
 _push_tokens:     list = []   # Expo push tokens registered by citizen app users
 _latest_storm_warnings: list = []  # most recent ForecastAgent storm cell warnings
@@ -1050,11 +1051,14 @@ def _action_agent(decision: dict) -> None:
     Persists alerts, updates the global readings state, and logs the outcome.
     In production this would also trigger push notifications and SMS.
     """
-    global _latest_readings, _active_alerts
+    global _latest_readings, _active_alerts, _demo_expiry
 
     risk     = decision.get("risk_level", "SAFE")
     readings = decision.pop("readings", {})
-    _latest_readings = readings
+    # Only overwrite if the demo spike has expired; otherwise keep injected data
+    if time.time() >= _demo_expiry:
+        _latest_readings = readings
+        _demo_expiry = 0.0
 
     alert = {
         "id":                       f"alert_{int(datetime.now().timestamp())}",
@@ -1361,12 +1365,14 @@ def demo_inject():
         river_level   = spike["level"]
         rainfall_rate = spike["rainfall"]
 
+    global _demo_expiry
     injected_readings = dict(_latest_readings) if _latest_readings else {}
     for r, d in JPS_FALLBACK.items():
         if r not in injected_readings:
             injected_readings[r] = dict(d)
     injected_readings[river_name] = spike
     _latest_readings = injected_readings
+    _demo_expiry = time.time() + 180  # spike visible for 3 minutes then auto-clears
 
     now = datetime.now()
     anomaly_score, _ = compute_anomaly_score(river_level, rainfall_rate, now.hour, now.month)

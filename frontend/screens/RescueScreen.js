@@ -89,7 +89,16 @@ export default function RescueScreen({ navigation }) {
         Alert.alert("Location Denied", "Enable location so rescuers can find you faster.");
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      // Use last known position immediately as a fallback while GPS locks
+      const last = await Location.getLastKnownPositionAsync({});
+      if (last) setCoords({ latitude: last.coords.latitude, longitude: last.coords.longitude });
+
+      // Then get a fresh high-accuracy fix
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        maximumAge: 0,
+        timeout: 15000,
+      });
       setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
     } catch {
       Alert.alert("Location Error", "Could not get your location. Describe it in the notes instead.");
