@@ -206,7 +206,7 @@
         <div class="text-base font-semibold leading-snug" id="aiReasoning" style="color:#e2e8f0">Waiting for assessment…</div>
       </div>
       <div class="text-right shrink-0">
-        <div class="text-xs text-slate-500">Confidence</div>
+        <div class="text-xs text-slate-500" id="aiConfidenceLabel">Confidence</div>
         <div class="text-lg font-bold text-white" id="aiConfidence">—</div>
       </div>
     </div>
@@ -374,7 +374,10 @@ function renderSummary(d) {
   aiEl.textContent = d.reasoning || 'No assessment yet';
   aiEl.style.color = RISK_COLOR[risk] || '#e2e8f0';
   document.getElementById('aiAction').textContent     = d.recommended_action ? '→ ' + d.recommended_action : '';
-  document.getElementById('aiConfidence').textContent = d.confidence ? Math.round(d.confidence * 100) + '%' : '—';
+  const isAI = d.assessment_source === 'claude';
+  document.getElementById('aiConfidenceLabel').textContent = isAI ? 'Confidence' : 'Method';
+  document.getElementById('aiConfidence').textContent      = isAI ? Math.round((d.confidence||0) * 100) + '%' : 'Rule-based';
+  document.getElementById('aiConfidence').style.color      = isAI ? '#fff' : '#94a3b8';
 
   // Storm incoming bar
   const storms = d.storm_warnings || [];

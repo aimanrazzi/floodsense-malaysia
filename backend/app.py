@@ -790,7 +790,9 @@ Respond ONLY in this exact JSON format:
         raw = message.content[0].text.strip()
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
-            return json.loads(match.group(0))
+            result = json.loads(match.group(0))
+            result["source"] = "claude"
+            return result
     except Exception as e:
         logger.error(f"[Claude] API call failed: {e}")
 
@@ -832,6 +834,7 @@ def _rule_based_fallback(readings: dict) -> dict:
         "affected_districts": list(set(affected)),
         "estimated_time_to_critical": "N/A",
         "confidence": 0.75,
+        "source": "rule_based",
         "recommended_action": actions[worst_risk],
         "reasoning": f"Rule-based assessment using JPS thresholds and flood-type classification.{flood_type_note}",
     }
@@ -1722,6 +1725,7 @@ def dashboard_stats():
         "reasoning":          latest.get("reasoning", ""),
         "recommended_action": latest.get("recommended_action", ""),
         "confidence":         latest.get("confidence", 0),
+        "assessment_source":  latest.get("source", "rule_based"),
         "last_updated":       _last_cycle_at or latest.get("timestamp", ""),
         "affected_districts": latest.get("affected_districts", []),
         "districts":          districts_summary,
