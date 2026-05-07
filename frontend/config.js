@@ -5,4 +5,4 @@
 // After deploying to Render, comment out the local line and uncomment production:
 // export const BACKEND_URL = "https://floodsense-malaysia.onrender.com";
 
-export const BACKEND_URL = "http://10.11.0.190:5000"; // local dev — update before demo
+export const BACKEND_URL = "https://floodsense-malaysia.onrender.com"; // local dev — update before demo
