@@ -772,7 +772,7 @@ const styles = StyleSheet.create({
   metric:         { flex: 1, alignItems: "center" },
   metricIcon:     { fontSize: 17, marginBottom: 4 },
   metricValue:    { fontSize: 17, fontWeight: "700", color: FS.text },
-  metricLabel:    { fontSize: 11, color: FS.subtext, marginTop: 2 },
+  metricLabel:    { fontSize: 12, color: "#A8CCE0", marginTop: 2 },
   metricDivider:  { width: 1, backgroundColor: FS.border, marginVertical: 4 },
   drainBadge:     { borderWidth: 1, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginBottom: 2 },
   drainBadgeText: { fontSize: 10, fontWeight: "900" },
@@ -780,7 +780,7 @@ const styles = StyleSheet.create({
   levelBarBg:     { height: 5, backgroundColor: FS.border, borderRadius: 999, overflow: "hidden", marginBottom: 4 },
   levelBarFill:   { height: "100%", borderRadius: 999 },
   levelBarLabels: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-  levelBarLabel:  { fontSize: 10, color: FS.subtext },
+  levelBarLabel:  { fontSize: 11, color: "#A8CCE0" },
 
   evacuateBtn:     { borderWidth: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", marginBottom: 6 },
   evacuateBtnText: { fontSize: 12, fontWeight: "800" },
@@ -799,8 +799,8 @@ const styles = StyleSheet.create({
   legendRow:   { flexDirection: "row", justifyContent: "space-between" },
   legendItem:  { alignItems: "center", flex: 1 },
   legendDot:   { width: 9, height: 9, borderRadius: 5, marginBottom: 4 },
-  legendLabel: { fontSize: 11, color: FS.text, fontWeight: "700" },
-  legendRange: { fontSize: 9, color: FS.subtext, marginTop: 2 },
+  legendLabel: { fontSize: 12, color: FS.text, fontWeight: "700" },
+  legendRange: { fontSize: 10, color: "#A8CCE0", marginTop: 2 },
 
   sosBtn: {
     position: "absolute", bottom: 96, right: 20,

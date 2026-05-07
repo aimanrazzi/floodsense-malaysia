@@ -156,7 +156,7 @@ export default function AlertDetailScreen({ route, navigation }) {
           {loading && (
             <View style={styles.loadingBox}>
               <ActivityIndicator size="large" color={FS.primary} />
-              <Text style={styles.loadingText}>Asking Claude AI for risk assessment…</Text>
+              <Text style={styles.loadingText}>Consulting Risk Assessment Agent…</Text>
             </View>
           )}
 
@@ -376,29 +376,29 @@ const styles = StyleSheet.create({
   },
   metricBox: { flex: 1, alignItems: "center" },
   metricValue: { fontSize: 20, fontWeight: "800", color: FS.text },
-  metricLabel: { fontSize: 10, color: FS.subtext, marginTop: 4, textAlign: "center" },
+  metricLabel: { fontSize: 12, color: "#A8CCE0", marginTop: 4, textAlign: "center" },
   metricDivider: { width: 1, backgroundColor: FS.border, marginVertical: 4 },
 
   section: {
     backgroundColor: FS.card, borderRadius: 12, padding: 16,
     marginBottom: 12, borderLeftWidth: 4, borderWidth: 1, borderColor: FS.border,
   },
-  sectionLabel: { fontSize: 10, color: FS.subtext, fontWeight: "800", letterSpacing: 1, marginBottom: 8 },
+  sectionLabel: { fontSize: 11, color: "#A8CCE0", fontWeight: "800", letterSpacing: 1, marginBottom: 8 },
   actionText: { fontSize: 16, color: FS.text, fontWeight: "700", lineHeight: 24 },
 
   card: {
     backgroundColor: FS.card, borderRadius: 12, padding: 16,
     marginBottom: 12, borderWidth: 1, borderColor: FS.border,
   },
-  cardTitle: { fontSize: 13, color: FS.subtext, fontWeight: "700", marginBottom: 10 },
-  reasoningText: { fontSize: 14, color: FS.text, lineHeight: 22 },
+  cardTitle: { fontSize: 14, color: FS.text, fontWeight: "700", marginBottom: 10 },
+  reasoningText: { fontSize: 15, color: FS.text, lineHeight: 24 },
 
   factorRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: FS.border,
+    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: FS.border,
   },
-  factorLabel: { fontSize: 12, color: FS.subtext, fontWeight: "600", flex: 1 },
-  factorValue: { fontSize: 13, color: FS.text, fontWeight: "700", textAlign: "right", flex: 1 },
+  factorLabel: { fontSize: 13, color: "#A8CCE0", fontWeight: "600", flex: 1 },
+  factorValue: { fontSize: 14, color: FS.text, fontWeight: "700", textAlign: "right", flex: 1 },
   factorBadge: {
     borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2,
   },
@@ -409,9 +409,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: FS.border,
   },
   readingRiver: { fontSize: 14, fontWeight: "700", color: FS.text },
-  readingDistrict: { fontSize: 11, color: FS.subtext, marginTop: 2 },
+  readingDistrict: { fontSize: 12, color: "#A8CCE0", marginTop: 2 },
   readingStats: { alignItems: "flex-end", gap: 4 },
-  readingValue: { fontSize: 13, color: FS.text, fontWeight: "600" },
+  readingValue: { fontSize: 14, color: FS.text, fontWeight: "600" },
 
   evacuateBtn: {
     borderRadius: 14, paddingVertical: 16, alignItems: "center",
