@@ -10,7 +10,11 @@ import logging
 import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _now() -> datetime:
+    """Current time as timezone-aware UTC (renders correctly in any browser locale)."""
+    return datetime.now(timezone.utc)
 from pathlib import Path
 
 import numpy as np
@@ -1066,7 +1070,7 @@ def _action_agent(decision: dict) -> None:
 
     alert = {
         "id":                       f"alert_{int(datetime.now().timestamp())}",
-        "timestamp":                datetime.now().isoformat(),
+        "timestamp":                _now().isoformat(),
         "risk_level":               risk,
         "affected_districts":       decision.get("affected_districts", []),
         "confidence":               decision.get("confidence", 0.0),
@@ -1113,7 +1117,7 @@ def run_flood_agent() -> None:
         analysis   = _analysis_agent(forecasted)
         decision   = _decision_agent(analysis)
         _action_agent(decision)
-        _last_cycle_at = datetime.now().isoformat()
+        _last_cycle_at = _now().isoformat()
     except Exception as e:
         logger.error(f"[Pipeline] Cycle failed: {e}")
 
@@ -1190,7 +1194,7 @@ def get_flood_levels():
             "status":          status,
             "color":           color,
             "flood_type":      flood_type,
-            "last_updated":    datetime.now().isoformat(),
+            "last_updated":    _now().isoformat(),
         })
 
     return jsonify({"success": True, "data": result})
@@ -1209,7 +1213,7 @@ def analyze_flood():
     if not readings:
         return jsonify({"error": "No readings available — please provide readings or wait for the agent to run"}), 400
 
-    now = datetime.now()
+    now = _now()
     scores = [
         compute_anomaly_score(
             v.get("level", 0),
@@ -1391,7 +1395,7 @@ def demo_inject():
     _latest_readings = injected_readings
     _demo_expiry = time.time() + 180  # spike visible for 3 minutes then auto-clears
 
-    now = datetime.now()
+    now = _now()
     anomaly_score, _ = compute_anomaly_score(river_level, rainfall_rate, now.hour, now.month)
     assessment = classify_risk_with_claude(injected_readings, anomaly_score)
     risk = assessment.get("risk_level", "SAFE")
@@ -1600,7 +1604,7 @@ def dispatch_rescue(case_id):
         if case.get("id") == case_id or case.get("case_id") == case_id:
             case["status"]        = "dispatched"
             case["dispatched"]    = True
-            case["dispatched_at"] = datetime.now().isoformat()
+            case["dispatched_at"] = _now().isoformat()
             case["team"]          = body.get("team", "Operations Centre")
             case["notes"]         = body.get("notes", "")
             if _firebase_initialized and _firestore_db:
@@ -1622,7 +1626,7 @@ def resolve_rescue(case_id):
     for case in _rescue_cases:
         if case.get("id") == case_id or case.get("case_id") == case_id:
             case["status"]      = "resolved"
-            case["resolved_at"] = datetime.now().isoformat()
+            case["resolved_at"] = _now().isoformat()
             case["resolved_by"] = body.get("officer", "Operations Centre")
             case["outcome"]     = body.get("outcome", "Rescued successfully")
             if _firebase_initialized and _firestore_db:
