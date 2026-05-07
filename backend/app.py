@@ -778,13 +778,13 @@ Respond ONLY in this exact JSON format:
   "estimated_time_to_critical": "X hours or N/A",
   "confidence": 0.0-1.0,
   "recommended_action": "one clear action for residents",
-  "reasoning": "One sentence: state flood type, district, primary metric, and whether risk is current or forecast-driven (e.g. 'forecast shows 18mm in 2h')."
+  "reasoning": "2-3 sentences giving an overall situational summary for the government operations centre. List EVERY district currently at WARNING or DANGER level by name, their flood type (flash flood / river overflow), and their key metric (e.g. 58mm/hr rainfall or 5.2m river level). If no districts are at WARNING or DANGER, summarise the watch-level districts or state that all monitored areas are currently safe. End with whether the overall situation is stable, escalating, or easing."
 }}"""
 
     try:
         message = _anthropic_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=512,
+            max_tokens=768,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text.strip()
