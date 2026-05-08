@@ -678,33 +678,51 @@ def _fetch_weatherapi_rainfall() -> dict:
 _GLOFAS_CACHE: dict = {"data": {}, "ts": 0.0}
 _GLOFAS_TTL   = 1800  # 30-min cache — GloFAS updates every 6h, no point refreshing every 60s
 
+# Climatological normal discharge (m³/s) per district — used as the self-calibrating
+# baseline for _discharge_to_level(). These are typical dry-season / base-flow values
+# for the rivers feeding each district; flood events run 3–10× these figures.
+# river_discharge_mean_30y was removed from Open-Meteo GloFAS API; static baselines
+# are equivalent and more stable for a fixed geography.
+_DISTRICT_CLIM_DISCHARGE: dict = {
+    "Klang":          60.0,
+    "Gombak":         25.0,
+    "Kepong":         20.0,
+    "Cheras":         18.0,
+    "Ampang":         22.0,
+    "Petaling Jaya":  15.0,
+    "Bangsar":        12.0,
+    "Subang Jaya":    18.0,
+    "Shah Alam":      25.0,
+    "Kuala Selangor": 45.0,
+    "Sepang":         35.0,
+}
+
 
 def _fetch_one_glofas(district: str, lat: float, lng: float) -> tuple:
     resp = requests.get(
         "https://flood-api.open-meteo.com/v1/flood",
         params={
             "latitude": lat, "longitude": lng,
-            "daily": "river_discharge,river_discharge_mean_30y",
+            "daily": "river_discharge",
             "forecast_days": 1,
         },
         timeout=8,
     )
     resp.raise_for_status()
-    daily    = resp.json().get("daily", {})
-    vals     = daily.get("river_discharge",          [None])
-    means    = daily.get("river_discharge_mean_30y", [None])
+    daily = resp.json().get("daily", {})
+    vals  = daily.get("river_discharge", [None])
     return district, {
-        "discharge": float(vals[0])  if vals  and vals[0]  is not None else None,
-        "mean_30y":  float(means[0]) if means and means[0] is not None else None,
+        "discharge": float(vals[0]) if vals and vals[0] is not None else None,
+        "mean_30y":  _DISTRICT_CLIM_DISCHARGE.get(district, 30.0),
     }
 
 
 def _fetch_glofas_discharge() -> dict:
     """
     Fetch today's river discharge from Open-Meteo GloFAS for all districts.
-    Returns {district: {discharge: float|None, mean_30y: float|None}}.
-    Discharge is in m³/s. mean_30y is the 30-year climatological mean — used
-    to normalise the current reading without needing hard-coded thresholds.
+    Returns {district: {discharge: float|None, mean_30y: float}}.
+    Discharge is in m³/s. mean_30y is the static climatological baseline used
+    to normalise the current reading without needing hard-coded level thresholds.
     """
     global _GLOFAS_CACHE
     if _GLOFAS_CACHE["data"] and time.time() - _GLOFAS_CACHE["ts"] < _GLOFAS_TTL:
@@ -724,7 +742,7 @@ def _fetch_glofas_discharge() -> dict:
                     result[d] = data
                 except Exception as e:
                     logger.warning(f"[GloFAS] {d}: {e}")
-                    result[d] = {"discharge": None, "mean_30y": None}
+                    result[d] = {"discharge": None, "mean_30y": _DISTRICT_CLIM_DISCHARGE.get(d, 30.0)}
         covered = sum(1 for v in result.values() if v.get("discharge") is not None)
         logger.info(f"[GloFAS] River discharge for {covered}/{len(result)} districts")
         _GLOFAS_CACHE = {"data": result, "ts": time.time()}
