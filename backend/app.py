@@ -1239,6 +1239,9 @@ _push_tokens:     list = []   # Expo push tokens registered by citizen app users
 _latest_storm_warnings: list = []  # most recent ForecastAgent storm cell warnings
 _last_cycle_at:   str  = ""   # ISO timestamp of last successful pipeline cycle
 _false_positive_reports: list = []  # citizen feedback reports stored before Firestore sync
+# Dedicated store for the latest pipeline assessment — survives between alert events
+# and is always overwritten on every cycle regardless of risk level.
+_latest_assessment: dict = {}
 
 
 def _agent_msg(from_agent: str, to_agent: str, summary: str, payload: dict = None) -> dict:
@@ -1453,7 +1456,7 @@ def _action_agent(decision: dict) -> None:
     Persists alerts, updates the global readings state, and logs the outcome.
     In production this would also trigger push notifications and SMS.
     """
-    global _latest_readings, _active_alerts, _demo_expiry
+    global _latest_readings, _active_alerts, _demo_expiry, _latest_assessment
 
     risk     = decision.get("risk_level", "SAFE")
     readings = decision.pop("readings", {})
@@ -1466,6 +1469,7 @@ def _action_agent(decision: dict) -> None:
         "id":                       f"alert_{int(datetime.now().timestamp())}",
         "timestamp":                _now().isoformat(),
         "risk_level":               risk,
+        "source":                   decision.get("source", "rule_based"),
         "affected_districts":       decision.get("affected_districts", []),
         "confidence":               decision.get("confidence", 0.0),
         "recommended_action":       decision.get("recommended_action", ""),
@@ -1474,6 +1478,10 @@ def _action_agent(decision: dict) -> None:
         "anomaly_score":            round(decision.get("max_anomaly", 0), 3),
         "readings":                 readings,
     }
+
+    # Always update the dedicated assessment store — this is what the dashboard
+    # reads for reasoning/confidence, separate from the alert event history.
+    _latest_assessment = {k: v for k, v in alert.items() if k != "readings"}
 
     if risk in ("WARNING", "DANGER"):
         _persist_alert(alert)
@@ -2159,7 +2167,10 @@ def dashboard_stats():
     safe      = [d for d in districts_summary if d["status"] == "SAFE"]
     total_evac_cap = sum(d["evac_capacity"] for d in districts_summary)
     states_at_risk = len({d["state"] for d in at_risk if d["state"]})
-    latest = _active_alerts[0] if _active_alerts else {}
+    # _latest_assessment is always the most recent pipeline result (all risk levels).
+    # Fall back to _active_alerts[0] only if the server just started and no cycle
+    # has run yet.
+    latest = _latest_assessment if _latest_assessment else (_active_alerts[0] if _active_alerts else {})
 
     # SOS priority scoring: district risk weight × people count × log time-waiting
     active_cases = [c for c in _rescue_cases if c.get("status") not in ("resolved",)]

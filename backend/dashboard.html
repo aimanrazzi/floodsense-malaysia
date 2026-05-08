@@ -524,6 +524,7 @@ let _allSosCases    = [];
 let _sosFilter      = 'active';
 let _knownSosIds       = new Set();
 let _knownCaseStatuses = {};
+let _lastSummaryData   = null;   // cached full dashboard response for re-rendering on state change
 
 function _requestNotifPermission() {
   if ('Notification' in window && Notification.permission === 'default')
@@ -646,6 +647,7 @@ function setStateFilter(btn, state) {
   buildStateChips(_allDistricts);
   renderDistricts(_allDistricts);
   renderEvacSummary(_allDistricts);
+  updateSituationOverview();   // re-render overview for the newly selected state
   const thState = document.getElementById('th-state');
   if (thState) thState.style.display = state ? 'none' : '';
 }
@@ -712,7 +714,105 @@ function renderReasoningBullets(reasoning, riskColor) {
     </div>`;
 }
 
+// Builds a state-focused summary from district data — no extra API call needed.
+function renderStateFocus(state, districts, d) {
+  const el = document.getElementById('aiReasoningBullets');
+  const stateDistricts = districts.filter(x => x.state === state);
+  if (!stateDistricts.length) {
+    el.innerHTML = `<p class="text-xs text-slate-600">No district data available for ${state}.</p>`;
+    return;
+  }
+  const SO = { DANGER:3, WARNING:2, WATCH:1, SAFE:0 };
+  const worstStatus = stateDistricts.reduce((w, x) =>
+    (SO[x.status]||0) > (SO[w]||0) ? x.status : w, 'SAFE');
+  const riskColor = RISK_COLOR[worstStatus] || '#4ade80';
+
+  const byStatus = { DANGER:[], WARNING:[], WATCH:[], SAFE:[] };
+  stateDistricts.forEach(x => byStatus[x.status] ? byStatus[x.status].push(x) : byStatus.SAFE.push(x));
+
+  const affected = [...byStatus.DANGER, ...byStatus.WARNING, ...byStatus.WATCH];
+  const headline = affected.length
+    ? `${state}: ${affected.length} district${affected.length>1?'s':''} flagged — worst is ${worstStatus}.`
+    : `${state}: All ${stateDistricts.length} district${stateDistricts.length>1?'s':''} currently safe.`;
+
+  const bullets = [];
+  if (byStatus.DANGER.length)
+    bullets.push(`🔴 DANGER — ${byStatus.DANGER.map(x=>`<strong>${x.district}</strong>`).join(', ')}`);
+  if (byStatus.WARNING.length)
+    bullets.push(`🟠 WARNING — ${byStatus.WARNING.map(x=>`<strong>${x.district}</strong>`).join(', ')}`);
+  if (byStatus.WATCH.length)
+    bullets.push(`🟡 WATCH — ${byStatus.WATCH.map(x=>x.district).join(', ')}`);
+  if (byStatus.SAFE.length)
+    bullets.push(`🟢 ${byStatus.SAFE.length} district${byStatus.SAFE.length>1?'s':''} clear`);
+
+  // Mention other states that have issues
+  const otherAtRisk = {};
+  districts.forEach(x => {
+    if (!x.state || x.state === state) return;
+    if (x.status === 'DANGER' || x.status === 'WARNING') {
+      if (!otherAtRisk[x.state] || SO[x.status] > SO[otherAtRisk[x.state]])
+        otherAtRisk[x.state] = x.status;
+    }
+  });
+  const otherEntries = Object.entries(otherAtRisk);
+  if (otherEntries.length) {
+    const parts = otherEntries.map(([s,r]) =>
+      `<span style="color:${RISK_COLOR[r]}">${s} (${r})</span>`
+    ).join(', ');
+    bullets.push(`⚠ Also active: ${parts}`);
+  } else {
+    bullets.push('All other states are currently clear.');
+  }
+
+  el.innerHTML = `
+    <p class="text-sm font-semibold leading-snug mb-2" style="color:${riskColor}">${headline}</p>
+    <div class="space-y-1">
+      ${bullets.map(b => `
+        <div class="flex items-start gap-2">
+          <span style="color:#475569;margin-top:2px;flex-shrink:0;user-select:none">·</span>
+          <span style="font-size:12px;color:#94a3b8;line-height:1.5">${b}</span>
+        </div>`).join('')}
+    </div>`;
+
+  // Update recommended action from the global assessment
+  const actionBlock = document.getElementById('aiActionBlock');
+  const actionEl    = document.getElementById('aiAction');
+  const action = d?.recommended_action;
+  if (action) { actionEl.textContent = action; actionBlock.classList.remove('hidden'); }
+  else { actionBlock.classList.add('hidden'); }
+}
+
+// Re-renders the Situation Overview section using the cached summary data.
+// Called both from renderSummary() and from setStateFilter() so state-chip
+// clicks update the overview without waiting for the next network refresh.
+function updateSituationOverview() {
+  if (!_lastSummaryData) return;
+  if (_stateFilter) {
+    renderStateFocus(_stateFilter, _allDistricts, _lastSummaryData);
+    // Update section label to show current state focus
+    const lbl = document.querySelector('#aiBanner .text-xs.font-semibold.uppercase');
+    if (lbl) lbl.textContent = `Situation Overview — ${_stateFilter}`;
+  } else {
+    const risk  = _lastSummaryData.overall_risk || 'SAFE';
+    const color = RISK_COLOR[risk] || '#fff';
+    renderReasoningBullets(_lastSummaryData.reasoning || '', color);
+    // Restore recommended action
+    const actionBlock = document.getElementById('aiActionBlock');
+    const actionEl    = document.getElementById('aiAction');
+    if (_lastSummaryData.recommended_action) {
+      actionEl.textContent = _lastSummaryData.recommended_action;
+      actionBlock.classList.remove('hidden');
+    } else {
+      actionBlock.classList.add('hidden');
+    }
+    const lbl = document.querySelector('#aiBanner .text-xs.font-semibold.uppercase');
+    if (lbl) lbl.textContent = 'Situation Overview — Peninsula Malaysia';
+  }
+}
+
 function renderSummary(d) {
+  _lastSummaryData = d;  // cache so state-chip clicks can re-render without a network call
+
   const s = d.summary || {};
   document.getElementById('s-risk').textContent   = s.at_risk ?? '—';
   document.getElementById('s-states').textContent = s.states_at_risk ?? '—';
@@ -746,18 +846,9 @@ function renderSummary(d) {
     confWrap.classList.add('hidden');
   }
 
-  // Reasoning bullets
-  renderReasoningBullets(d.reasoning || '', color);
-
-  // Recommended action block
-  const actionBlock = document.getElementById('aiActionBlock');
-  const actionEl    = document.getElementById('aiAction');
-  if (d.recommended_action) {
-    actionEl.textContent = d.recommended_action;
-    actionBlock.classList.remove('hidden');
-  } else {
-    actionBlock.classList.add('hidden');
-  }
+  // Reasoning bullets + recommended action are handled by updateSituationOverview()
+  // so they respect the active state filter without needing a second API call.
+  updateSituationOverview();
 
   // Storm incoming bar
   const storms   = d.storm_warnings || [];
