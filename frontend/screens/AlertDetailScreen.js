@@ -209,13 +209,31 @@ export default function AlertDetailScreen({ route, navigation }) {
                 </View>
               )}
 
-              {/* AI reasoning */}
-              {assessment.reasoning && (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Summary</Text>
-                  <Text style={styles.reasoningText}>{assessment.reasoning}</Text>
-                </View>
-              )}
+              {/* Summary — split into scannable sentences */}
+              {assessment.reasoning && (() => {
+                const sentences = assessment.reasoning
+                  .split(/(?<=[.!?])\s+/)
+                  .map(s => s.trim())
+                  .filter(Boolean);
+                const headline = sentences[0] || "";
+                const rest     = sentences.slice(1);
+                return (
+                  <View style={styles.card}>
+                    <Text style={styles.cardTitle}>Summary</Text>
+                    <View style={[styles.summaryHeadline, { borderLeftColor: meta.color }]}>
+                      <Text style={[styles.summaryHeadlineText, { color: meta.color }]}>
+                        {headline}
+                      </Text>
+                    </View>
+                    {rest.map((s, i) => (
+                      <View key={i} style={styles.summaryLine}>
+                        <Text style={styles.summaryDot}>·</Text>
+                        <Text style={styles.summaryLineText}>{s}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
 
               {/* Risk Factors — flood-type-aware, replaces the generic Affected Districts list */}
               <View style={styles.card}>
@@ -392,6 +410,14 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 14, color: FS.text, fontWeight: "700", marginBottom: 10 },
   reasoningText: { fontSize: 15, color: FS.text, lineHeight: 24 },
+
+  summaryHeadline: {
+    borderLeftWidth: 3, paddingLeft: 10, marginBottom: 12,
+  },
+  summaryHeadlineText: { fontSize: 15, fontWeight: "800", lineHeight: 22 },
+  summaryLine: { flexDirection: "row", marginBottom: 8, alignItems: "flex-start" },
+  summaryDot:  { fontSize: 16, color: FS.subtext, marginRight: 8, lineHeight: 22 },
+  summaryLineText: { flex: 1, fontSize: 14, color: FS.text, lineHeight: 22 },
 
   factorRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",

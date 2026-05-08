@@ -322,6 +322,30 @@
         </div>
       </div>
 
+      <!-- Rescue Operations Status -->
+      <div class="card" style="padding:14px 16px;margin-bottom:12px">
+        <h2 class="mb-3">Rescue Operations</h2>
+        <div class="grid grid-cols-4 gap-2" id="rescueStats">
+          <div style="background:#1e293b;border-radius:8px;padding:10px;text-align:center;border:1px solid #334155">
+            <div style="font-size:22px;font-weight:900;color:#f87171" id="rs-pending">0</div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px">AWAITING</div>
+          </div>
+          <div style="background:#1e293b;border-radius:8px;padding:10px;text-align:center;border:1px solid #334155">
+            <div style="font-size:22px;font-weight:900;color:#60a5fa" id="rs-responding">0</div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px">RESPONDING</div>
+          </div>
+          <div style="background:#1e293b;border-radius:8px;padding:10px;text-align:center;border:1px solid #334155">
+            <div style="font-size:22px;font-weight:900;color:#34d399" id="rs-dispatched">0</div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px">DISPATCHED</div>
+          </div>
+          <div style="background:#1e293b;border-radius:8px;padding:10px;text-align:center;border:1px solid #334155">
+            <div style="font-size:22px;font-weight:900;color:#4ade80" id="rs-resolved">0</div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px">RESOLVED</div>
+          </div>
+        </div>
+        <div id="rs-note" style="font-size:11px;color:#64748b;margin-top:8px;text-align:center"></div>
+      </div>
+
       <!-- SOS Panel -->
       <div class="card" id="sosPanel">
         <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -443,7 +467,7 @@ function renderSummary(d) {
     confWrap.style.display = '';
     document.getElementById('aiConfidenceLabel').textContent = 'Confidence';
     confEl.textContent = Math.round((d.confidence||0) * 100) + '%';
-    confEl.style.color = '#fff';
+    confEl.style.color = '$ s';
   } else {
     confWrap.style.display = 'none';
   }
@@ -529,13 +553,25 @@ function renderSOS(cases) {
   const el    = document.getElementById('sosList');
   const count = document.getElementById('sosCount');
 
-  const open     = cases.filter(c => c.status === 'received' || !c.status);
+  const open       = cases.filter(c => c.status === 'received' || !c.status);
+  const responding = cases.filter(c => c.status === 'responding');
   const dispatched = cases.filter(c => c.status === 'dispatched');
-  const resolved = cases.filter(c => c.status === 'resolved');
+  const resolved   = cases.filter(c => c.status === 'resolved');
 
-  const activeCount = open.length + dispatched.length;
+  // Update rescue operations counters
+  document.getElementById('rs-pending').textContent    = open.length;
+  document.getElementById('rs-responding').textContent = responding.length;
+  document.getElementById('rs-dispatched').textContent = dispatched.length;
+  document.getElementById('rs-resolved').textContent   = resolved.length;
+  const rsNote = document.getElementById('rs-note');
+  const totalActive = open.length + responding.length + dispatched.length;
+  rsNote.textContent = totalActive
+    ? `${totalActive} case${totalActive !== 1 ? 's' : ''} require attention · ${resolved.length} resolved this session`
+    : resolved.length ? `All cases resolved this session (${resolved.length} total)` : 'No SOS cases received';
+
+  const activeCount = open.length + dispatched.length + responding.length;
   count.textContent = activeCount
-    ? `${open.length} pending · ${dispatched.length} dispatched · ${resolved.length} resolved`
+    ? `${open.length} awaiting · ${responding.length} responding · ${dispatched.length} dispatched`
     : resolved.length ? `All resolved (${resolved.length})` : 'No cases';
 
   let filtered = cases;
