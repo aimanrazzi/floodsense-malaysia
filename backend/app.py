@@ -573,14 +573,23 @@ def _load_csv_data() -> np.ndarray | None:
                 df[rain_col] = pd.to_numeric(df[rain_col], errors="coerce")
                 row["rainfall_rate"] = df[rain_col]
 
-            # Prefer explicit datetime column; fall back to separate Month column
+            # Detect explicit hour column (e.g. generate_training_data.py output)
+            hour_col = next(
+                (c for c in df.columns if c.strip().lower() in ("hour_of_day", "hour", "hour_of_day")),
+                None,
+            )
+
+            # Prefer explicit datetime column; fall back to hour/month columns
             if dt_col:
                 dt = pd.to_datetime(df[dt_col], errors="coerce")
                 row["hour"]  = dt.dt.hour.fillna(12)
                 row["month"] = dt.dt.month.fillna(6)
+            elif hour_col and month_col:
+                row["hour"]  = pd.to_numeric(df[hour_col],  errors="coerce").fillna(12)
+                row["month"] = pd.to_numeric(df[month_col], errors="coerce").fillna(6)
             elif month_col:
                 row["month"] = pd.to_numeric(df[month_col], errors="coerce").fillna(6)
-                row["hour"]  = 12  # daily/monthly data has no hour — use noon
+                row["hour"]  = 12
             else:
                 row["hour"]  = 12
                 row["month"] = 6
