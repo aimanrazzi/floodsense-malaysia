@@ -1396,8 +1396,9 @@ def _analysis_agent(readings: dict) -> dict:
 
     max_score    = max((v["anomaly_score"] for v in scored.values()), default=0.0)
     flagged      = [v["district"] for v in scored.values() if v["anomaly_score"] > 0.5]
-    # Escalate to Claude if ML detects anomaly OR ForecastAgent flagged incoming storms
-    needs_claude = max_score > 0.7 or len(forecast_warnings) > 0
+    # Always invoke Claude — Situation Overview must show meaningful state-by-state
+    # reasoning every cycle, not just when anomalies are detected.
+    needs_claude = True
 
     reason = []
     if max_score > 0.7:   reason.append(f"ML anomaly {max_score:.3f}")
@@ -1406,9 +1407,9 @@ def _analysis_agent(readings: dict) -> dict:
 
     _agent_msg(
         "AnalysisAgent", "DecisionAgent",
-        f"Score: {max_score:.3f} | {reason_str} — {'⚠ Escalating to Claude AI' if needs_claude else 'Rule-based sufficient'}",
+        f"Score: {max_score:.3f} | {reason_str} — Invoking Claude AI for full state-by-state summary",
         {"max_anomaly": round(max_score, 3), "flagged_districts": flagged,
-         "invoke_claude": needs_claude, "storm_warnings": forecast_warnings},
+         "invoke_claude": True, "storm_warnings": forecast_warnings},
     )
     return {"readings": scored, "max_anomaly": max_score, "flagged": flagged,
             "invoke_claude": needs_claude, "storm_warnings": forecast_warnings}
@@ -1417,8 +1418,8 @@ def _analysis_agent(readings: dict) -> dict:
 def _decision_agent(analysis: dict) -> dict:
     """
     DecisionAgent — CLASSIFY RISK
-    Uses Claude AI (when anomaly is high) or rule-based logic to produce a
-    structured risk assessment with reasoning the public and government can act on.
+    Always uses Claude AI for a full state-by-state reasoning summary.
+    Falls back to rule-based only if the Anthropic client is unavailable.
     """
     readings     = analysis["readings"]
     max_anomaly  = analysis["max_anomaly"]
