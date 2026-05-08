@@ -27,7 +27,15 @@
       "bundleIdentifier": "com.aimanrazzi.floodsense"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo.png",
+          "color": "#0A1628",
+          "sounds": []
+        }
+      ]
     ],
     "extra": {
       "eas": {

@@ -852,9 +852,8 @@ def _fetch_weatherapi_rainfall() -> dict:
     """
     global _RAINFALL_CACHE
     age = time.time() - _RAINFALL_CACHE["ts"]
-    if _RAINFALL_CACHE["data"] and any(v.get("precip", 0) > 0 if isinstance(v, dict) else v > 0
-                                       for v in _RAINFALL_CACHE["data"].values()) and age < _RAINFALL_TTL:
-        logger.info(f"[WeatherAPI] Cache hit ({int(age)}s old)")
+    if _RAINFALL_CACHE["data"] and age < _RAINFALL_TTL:
+        logger.info(f"[WeatherAPI] Cache hit ({int(age)}s old, {int(_RAINFALL_TTL - age)}s remaining)")
         return _RAINFALL_CACHE["data"]
 
     _EMPTY = {"precip": 0.0, "condition": "", "forecast_1h": 0.0, "forecast_2h": 0.0, "rain_chance_max": 0}
@@ -1071,9 +1070,11 @@ def fetch_jps_data() -> dict:
             rf_forecast_2h = rf_entry.get("forecast_2h", 0.0)
             rf_chance_max  = rf_entry.get("rain_chance_max", 0)
         else:
-            rf_precip = rf_entry
-            rf_condition = rf_forecast_1h = rf_forecast_2h = ""
-            rf_chance_max = 0
+            rf_precip     = rf_entry
+            rf_condition  = ""
+            rf_forecast_1h = 0.0
+            rf_forecast_2h = 0.0
+            rf_chance_max  = 0
 
         live_glofas = glofas.get("discharge") is not None
 
@@ -2107,6 +2108,7 @@ def dashboard_stats():
         evac_cap   = sum(c.get("capacity", 0) for c in centres)
         districts_summary.append({
             "district":    district,
+            "state":       DISTRICT_TO_STATE.get(district, ""),
             "river":       river,
             "status":      status,
             "flood_type":  flood_type,
@@ -2135,6 +2137,7 @@ def dashboard_stats():
     watching  = [d for d in districts_summary if d["status"] == "WATCH"]
     safe      = [d for d in districts_summary if d["status"] == "SAFE"]
     total_evac_cap = sum(d["evac_capacity"] for d in districts_summary)
+    states_at_risk = len({d["state"] for d in at_risk if d["state"]})
     latest = _active_alerts[0] if _active_alerts else {}
 
     # SOS priority scoring: district risk weight × people count × log time-waiting
@@ -2182,6 +2185,7 @@ def dashboard_stats():
             "at_risk":         len(at_risk),
             "watching":        len(watching),
             "safe":            len(safe),
+            "states_at_risk":  states_at_risk,
             "flash_flood_zones": sum(1 for d in districts_summary if d["flood_type"] == "flash_flood"),
             "river_zones":     sum(1 for d in districts_summary if d["flood_type"] == "river_overflow"),
             "total_evac_capacity": total_evac_cap,

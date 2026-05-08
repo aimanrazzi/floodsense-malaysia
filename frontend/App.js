@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { LanguageProvider } from "./context/LanguageContext";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
+import Constants from "expo-constants";
 import { BACKEND_URL } from "./config";
 import FloodMapScreen    from "./screens/HomeScreen";
 import AlertDetailScreen from "./screens/AlertDetailScreen";
@@ -44,7 +45,8 @@ async function registerForPushNotifications() {
       lightColor: "#1B6CA8",
     });
   }
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+  const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   return token;
 }
 
@@ -140,14 +142,16 @@ function AppRoot() {
 
   useEffect(() => {
     if (!user) return;
-    registerForPushNotifications().then((token) => {
-      if (!token) return;
-      fetch(`${BACKEND_URL}/api/push/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      }).catch(() => {});
-    });
+    registerForPushNotifications()
+      .then((token) => {
+        if (!token) return;
+        fetch(`${BACKEND_URL}/api/push/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        }).catch(() => {});
+      })
+      .catch(() => {});
 
     notifListener.current = Notifications.addNotificationReceivedListener(() => {});
     responseListener.current = Notifications.addNotificationResponseReceivedListener(() => {});

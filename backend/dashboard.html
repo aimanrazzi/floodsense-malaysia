@@ -104,6 +104,17 @@
 
     /* ── Header bar ── */
     .top-bar { background: #162032; border-bottom: 1px solid var(--border); padding: 12px 20px; margin: -16px -16px 20px -16px; border-radius: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top:20px; }
+
+    /* ── State filter chips ── */
+    .state-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+    .state-chips::-webkit-scrollbar { display: none; }
+    .state-chip { flex-shrink: 0; padding: 3px 11px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+    .state-chip.sc-active { background: rgba(59,130,246,0.2); color: #93c5fd; border-color: rgba(59,130,246,0.6); }
+    .state-chip:not(.sc-active) { background: transparent; color: var(--muted); border-color: var(--border); }
+    .state-chip:not(.sc-active):hover { border-color: #475569; color: #cbd5e1; }
+    .state-chip .sc-badge { display: inline-block; font-size: 9px; font-weight: 700; margin-left: 4px; padding: 0 4px; border-radius: 8px; line-height: 14px; vertical-align: middle; }
+    .sc-badge-warn { background: rgba(245,158,11,0.25); color: #fcd34d; }
+    .sc-badge-danger { background: rgba(239,68,68,0.25); color: #fca5a5; }
   </style>
 </head>
 <body class="min-h-screen p-4" style="padding-top:0">
@@ -120,17 +131,64 @@
         <label class="text-xs text-slate-400 block mb-1">District</label>
         <select id="demoDistrict" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs text-white p-2">
           <option value="">Random district</option>
-          <option value="Klang">Klang — Flash Flood Zone</option>
-          <option value="Gombak">Gombak — Flash Flood Zone</option>
-          <option value="Kepong">Kepong — Flash Flood Zone</option>
-          <option value="Cheras">Cheras — Flash Flood Zone</option>
-          <option value="Ampang">Ampang — Flash Flood Zone</option>
-          <option value="Petaling Jaya">Petaling Jaya — Flash Flood Zone</option>
-          <option value="Bangsar">Bangsar — Flash Flood Zone</option>
-          <option value="Subang Jaya">Subang Jaya — Flash Flood Zone</option>
-          <option value="Shah Alam">Shah Alam — Flash Flood Zone</option>
-          <option value="Kuala Selangor">Kuala Selangor — River Overflow Zone</option>
-          <option value="Sepang">Sepang — River Overflow Zone</option>
+          <optgroup label="── Selangor ──">
+            <option value="Klang">Klang — Flash Flood</option>
+            <option value="Gombak">Gombak — Flash Flood</option>
+            <option value="Kepong">Kepong — Flash Flood</option>
+            <option value="Cheras">Cheras — Flash Flood</option>
+            <option value="Ampang">Ampang — Flash Flood</option>
+            <option value="Petaling Jaya">Petaling Jaya — Flash Flood</option>
+            <option value="Bangsar">Bangsar — Flash Flood</option>
+            <option value="Subang Jaya">Subang Jaya — Flash Flood</option>
+            <option value="Shah Alam">Shah Alam — Flash Flood</option>
+            <option value="Kuala Selangor">Kuala Selangor — River Overflow</option>
+            <option value="Sepang">Sepang — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Johor ──">
+            <option value="Johor Bahru">Johor Bahru — Flash Flood</option>
+            <option value="Kota Tinggi">Kota Tinggi — River Overflow</option>
+            <option value="Batu Pahat">Batu Pahat — River Overflow</option>
+            <option value="Muar">Muar — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Perak ──">
+            <option value="Ipoh">Ipoh — Flash Flood</option>
+            <option value="Teluk Intan">Teluk Intan — River Overflow</option>
+            <option value="Taiping">Taiping — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Kelantan ──">
+            <option value="Kota Bharu">Kota Bharu — Flash Flood</option>
+            <option value="Pasir Mas">Pasir Mas — River Overflow</option>
+            <option value="Kuala Krai">Kuala Krai — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Terengganu ──">
+            <option value="Kuala Terengganu">Kuala Terengganu — Flash Flood</option>
+            <option value="Kemaman">Kemaman — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Pahang ──">
+            <option value="Kuantan">Kuantan — Flash Flood</option>
+            <option value="Temerloh">Temerloh — River Overflow</option>
+            <option value="Pekan">Pekan — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Negeri Sembilan ──">
+            <option value="Seremban">Seremban — Flash Flood</option>
+            <option value="Port Dickson">Port Dickson — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Melaka ──">
+            <option value="Melaka Tengah">Melaka Tengah — Flash Flood</option>
+            <option value="Alor Gajah">Alor Gajah — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Kedah ──">
+            <option value="Alor Setar">Alor Setar — Flash Flood</option>
+            <option value="Sungai Petani">Sungai Petani — Flash Flood</option>
+            <option value="Baling">Baling — River Overflow</option>
+          </optgroup>
+          <optgroup label="── Pulau Pinang ──">
+            <option value="Georgetown">Georgetown — Flash Flood</option>
+            <option value="Seberang Perai">Seberang Perai — Flash Flood</option>
+          </optgroup>
+          <optgroup label="── Perlis ──">
+            <option value="Kangar">Kangar — River Overflow</option>
+          </optgroup>
         </select>
       </div>
       <div class="mb-4">
@@ -216,7 +274,7 @@
       <img src="/static/logo.png" alt="FloodSense" style="width:38px;height:38px;object-fit:contain;border-radius:7px;" onerror="this.style.display='none'" />
       <div>
         <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9;letter-spacing:-0.4px">FloodSense Malaysia</div>
-        <div style="font-size:11px;color:#64748b;margin-top:1px">Government Operations Dashboard &nbsp;·&nbsp; KL / Selangor</div>
+        <div style="font-size:11px;color:#64748b;margin-top:1px">Government Operations Dashboard &nbsp;·&nbsp; Peninsula Malaysia &nbsp;·&nbsp; 11 States</div>
       </div>
     </div>
     <div class="flex items-center gap-4 flex-wrap">
@@ -236,10 +294,14 @@
   <div class="px-2">
 
   <!-- Summary Stat Cards -->
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+  <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
     <div class="stat-card" style="border-top:3px solid #ef4444">
       <div class="stat-value" style="color:#fca5a5" id="s-risk">—</div>
       <div class="stat-label">At Risk</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #c026d3">
+      <div class="stat-value" style="color:#e879f9" id="s-states">—</div>
+      <div class="stat-label">States at Risk</div>
     </div>
     <div class="stat-card" style="border-top:3px solid #f59e0b">
       <div class="stat-value" style="color:#fcd34d" id="s-watch">—</div>
@@ -259,24 +321,35 @@
     </div>
   </div>
 
-  <!-- AI Decision Banner -->
+  <!-- Situation Overview Card -->
   <div class="card mb-4" id="aiBanner">
-    <div class="flex items-start justify-between gap-3 mb-2">
-      <div class="flex-1 min-w-0">
-        <div class="text-xs text-slate-400 mb-1 font-semibold uppercase tracking-wider">Current Situation Summary</div>
-        <div class="text-base font-semibold leading-snug" id="aiReasoning" style="color:#e2e8f0">Waiting for assessment…</div>
-      </div>
-      <div class="text-right shrink-0">
-        <div class="text-xs text-slate-500" id="aiConfidenceLabel">Confidence</div>
-        <div class="text-lg font-bold text-white" id="aiConfidence">—</div>
+
+    <!-- Section label + confidence -->
+    <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Situation Overview — Peninsula Malaysia</div>
+      <div class="flex items-center gap-3">
+        <div id="aiConfidenceWrap" class="hidden flex items-center gap-1.5">
+          <span class="text-xs text-slate-500" id="aiConfidenceLabel">AI</span>
+          <span class="text-xs font-bold text-white" id="aiConfidence"></span>
+        </div>
+        <span class="text-xs text-slate-600" id="bannerStateRisk"></span>
       </div>
     </div>
-    <!-- Storm incoming warning (shown only when ForecastAgent detects storm cells) -->
+
+    <!-- State status strip — one chip per state, click to filter district table -->
+    <div id="stateStatusStrip" class="flex flex-wrap gap-1.5 mb-3">
+      <span class="text-xs text-slate-600">Loading states…</span>
+    </div>
+
+    <div style="border-top:1px solid #1e3a5f;margin-bottom:10px"></div>
+
+    <!-- Storm warning (conditional) -->
     <div id="aiStormBar" class="hidden rounded-lg px-3 py-2 text-xs mb-2"
          style="background:#422006;border:1px solid #92400e;color:#fde68a">
       ⛈ <strong>Incoming storm:</strong> <span id="aiStormText"></span>
     </div>
-    <!-- Priority SOS dispatch (shown when active cases exist) -->
+
+    <!-- Priority SOS dispatch (conditional) -->
     <div id="aiPriorityBar" class="hidden rounded-lg px-3 py-2 flex items-center justify-between gap-2 mb-2"
          style="background:#3b0707;border:1px solid #7f1d1d">
       <div class="text-xs" style="color:#fca5a5">
@@ -284,8 +357,19 @@
       </div>
       <button id="aiPriorityBtn" class="dispatch-btn shrink-0" style="font-size:10px">Dispatch</button>
     </div>
-    <!-- Recommended action -->
-    <div class="text-xs text-emerald-400" id="aiAction"></div>
+
+    <!-- AI reasoning — headline + bullet breakdown -->
+    <div id="aiReasoningBullets">
+      <p class="text-xs text-slate-600">Waiting for first assessment cycle…</p>
+    </div>
+
+    <!-- Recommended action block -->
+    <div id="aiActionBlock" class="hidden mt-3 rounded-lg px-3 py-2"
+         style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2)">
+      <div class="text-xs text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Recommended Action</div>
+      <div class="text-xs font-semibold text-emerald-400" id="aiAction"></div>
+    </div>
+
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -293,7 +377,7 @@
     <!-- District Table -->
     <div class="lg:col-span-2 space-y-4">
       <div class="card">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
           <h2>District Status</h2>
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-xs text-slate-500">Filter:</span>
@@ -304,11 +388,16 @@
             <button class="filter-btn" data-filter="SAFE" onclick="setFilter('SAFE')">🟢 Safe</button>
           </div>
         </div>
-        <div class="overflow-y-auto" style="max-height:380px">
+        <!-- State filter chips -->
+        <div class="state-chips mb-3" id="stateChipsBar">
+          <button class="state-chip sc-active" data-state="" onclick="setStateFilter(this,'')">All States</button>
+        </div>
+        <div class="overflow-y-auto" style="max-height:360px">
           <table class="w-full text-xs">
             <thead class="text-slate-400 border-b border-slate-700 sticky top-0 bg-[#0f2440]">
               <tr>
                 <th class="text-left py-2 pl-2">District</th>
+                <th class="text-left py-2" id="th-state">State</th>
                 <th class="text-left py-2">Type</th>
                 <th class="text-right py-2">Rain</th>
                 <th class="text-right py-2">2h Fcst</th>
@@ -365,7 +454,10 @@
 
       <!-- Evacuation Summary -->
       <div class="card">
-        <h2 class="mb-3">Evacuation Centres</h2>
+        <div class="flex items-center justify-between mb-3 gap-2">
+          <h2>Evacuation Centres</h2>
+          <span class="text-xs text-slate-500" id="evacStateLabel"></span>
+        </div>
         <div id="evacSummary" class="grid grid-cols-2 md:grid-cols-3 gap-2 overflow-y-auto" style="max-height:320px"></div>
       </div>
     </div>
@@ -390,7 +482,7 @@
 
   <!-- Footer -->
   <div class="mt-4 text-center" style="font-size:11px;color:#334155;padding-bottom:16px">
-    FloodSense Malaysia &nbsp;·&nbsp; Refreshes every 15s &nbsp;·&nbsp; KL / Selangor
+    FloodSense Malaysia &nbsp;·&nbsp; Peninsula Malaysia &nbsp;·&nbsp; 11 States &nbsp;·&nbsp; Refreshes every 15s
   </div>
   </div><!-- end px-2 wrapper -->
 
@@ -402,15 +494,30 @@ const AG_CLASS = {
   ActionAgent:'ag-Action', Dashboard:'ag-Dashboard'
 };
 const AG_DESC = {
-  DataAgent:    'Fetches live rainfall & river levels from WeatherAPI + JPS sensor network across 11 KL/Selangor districts.',
+  DataAgent:    'Fetches live rainfall & river levels from WeatherAPI + GloFAS sensor network across 43 districts in 11 peninsular states.',
   ForecastAgent:'Analyses upcoming hourly forecast data to detect incoming storm cells and estimate time-to-impact.',
   AnalysisAgent:'Runs Isolation Forest anomaly detection on current readings to flag statistically unusual rainfall events.',
   DecisionAgent:'Calls Claude AI with enriched sensor + forecast + anomaly data to produce a structured risk classification with confidence score.',
   ActionAgent:  'Executes decisions: activates evacuation centres, sends Expo push notifications to registered users, logs recommendations.',
 };
 
+const STATE_DISTRICTS = {
+  'Selangor':        ['Klang','Gombak','Kepong','Cheras','Ampang','Petaling Jaya','Bangsar','Subang Jaya','Shah Alam','Kuala Selangor','Sepang'],
+  'Johor':           ['Johor Bahru','Kota Tinggi','Batu Pahat','Muar'],
+  'Perak':           ['Ipoh','Teluk Intan','Taiping'],
+  'Kelantan':        ['Kota Bharu','Pasir Mas','Kuala Krai'],
+  'Terengganu':      ['Kuala Terengganu','Kemaman'],
+  'Pahang':          ['Kuantan','Temerloh','Pekan'],
+  'Negeri Sembilan': ['Seremban','Port Dickson'],
+  'Melaka':          ['Melaka Tengah','Alor Gajah'],
+  'Kedah':           ['Alor Setar','Sungai Petani','Baling'],
+  'Pulau Pinang':    ['Georgetown','Seberang Perai'],
+  'Perlis':          ['Kangar'],
+};
+
 let _allDistricts  = [];
 let _activeFilter  = 'ALL';
+let _stateFilter   = '';
 let _dispatchCaseId = null;
 let _resolveCaseId  = null;
 let _allSosCases    = [];
@@ -425,6 +532,8 @@ async function refresh() {
     const d = await statsRes.json();
     _allDistricts = d.districts || [];
     renderSummary(d);
+    buildStateStatusStrip(_allDistricts);
+    buildStateChips(_allDistricts);
     renderDistricts(_allDistricts);
     renderAgentFeed(d.agent_comms || []);
     renderEvacSummary(_allDistricts);
@@ -436,49 +545,157 @@ async function refresh() {
   } catch(e) { console.error(e); }
 }
 
+function buildStateChips(districts) {
+  const bar = document.getElementById('stateChipsBar');
+  // Count alert districts per state
+  const stateAlert = {};
+  const stateDanger = {};
+  for (const d of districts) {
+    const st = d.state || '';
+    if (!st) continue;
+    if (d.status === 'DANGER')  { stateDanger[st] = (stateDanger[st]||0)+1; stateAlert[st] = (stateAlert[st]||0)+1; }
+    else if (d.status === 'WARNING') { stateAlert[st] = (stateAlert[st]||0)+1; }
+  }
+  let html = `<button class="state-chip${_stateFilter==='' ? ' sc-active' : ''}" data-state="" onclick="setStateFilter(this,'')">All States</button>`;
+  for (const [state] of Object.entries(STATE_DISTRICTS)) {
+    const cnt   = stateAlert[state] || 0;
+    const isDng = stateDanger[state] > 0;
+    let badge = '';
+    if (cnt > 0) {
+      const cls = isDng ? 'sc-badge-danger' : 'sc-badge-warn';
+      badge = `<span class="sc-badge ${cls}">${cnt}</span>`;
+    }
+    const active = _stateFilter === state ? ' sc-active' : '';
+    html += `<button class="state-chip${active}" data-state="${state}" onclick="setStateFilter(this,'${state}')">${state}${badge}</button>`;
+  }
+  bar.innerHTML = html;
+}
+
+function setStateFilter(btn, state) {
+  _stateFilter = state;
+  buildStateStatusStrip(_allDistricts);
+  buildStateChips(_allDistricts);
+  renderDistricts(_allDistricts);
+  renderEvacSummary(_allDistricts);
+  const thState = document.getElementById('th-state');
+  if (thState) thState.style.display = state ? 'none' : '';
+}
+
+// State status strip — coloured chip per state, click drills into that state
+function buildStateStatusStrip(districts) {
+  const el = document.getElementById('stateStatusStrip');
+  const SO = { DANGER: 3, WARNING: 2, WATCH: 1, SAFE: 0 };
+  const worst = {}, atRiskCnt = {};
+  for (const d of districts) {
+    const st = d.state || '';
+    if (!st) continue;
+    if ((SO[d.status] ?? 0) > (SO[worst[st]] ?? -1)) worst[st] = d.status;
+    if (d.status === 'DANGER' || d.status === 'WARNING')
+      atRiskCnt[st] = (atRiskCnt[st] || 0) + 1;
+  }
+  const SC = {
+    DANGER:  'background:rgba(220,38,38,0.18);color:#fca5a5;border:1px solid rgba(220,38,38,0.5)',
+    WARNING: 'background:rgba(217,119,6,0.18);color:#fcd34d;border:1px solid rgba(217,119,6,0.5)',
+    WATCH:   'background:rgba(234,179,8,0.12);color:#fde68a;border:1px solid rgba(234,179,8,0.4)',
+    SAFE:    'background:rgba(22,163,74,0.06);color:#6ee7b7;border:1px solid rgba(22,163,74,0.18)',
+  };
+  el.innerHTML = Object.keys(STATE_DISTRICTS).map(state => {
+    const w = worst[state] || 'SAFE';
+    const n = atRiskCnt[state] || 0;
+    const badge = n > 0
+      ? `<span style="background:rgba(0,0,0,0.35);border-radius:8px;padding:0 4px;font-size:9px;margin-left:3px">${n}</span>`
+      : '';
+    const isActive = _stateFilter === state;
+    const outline  = isActive ? ';outline:2px solid #60a5fa;outline-offset:1px' : '';
+    return `<div style="${SC[w]};border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;cursor:pointer;white-space:nowrap${outline}"
+                 onclick="setStateFilter(null,'${state}')" title="${state}">${state}${badge}</div>`;
+  }).join('');
+  // Update banner sub-label
+  const atRisk = Object.keys(atRiskCnt).length;
+  const lbl = document.getElementById('bannerStateRisk');
+  if (lbl) lbl.textContent = atRisk > 0 ? `${atRisk} state${atRisk !== 1 ? 's' : ''} at risk` : 'All states clear';
+  if (lbl) lbl.style.color = atRisk > 0 ? '#fca5a5' : '#6ee7b7';
+}
+
+// Render Claude reasoning as scannable headline + bullets
+function renderReasoningBullets(reasoning, riskColor) {
+  const el = document.getElementById('aiReasoningBullets');
+  if (!reasoning) {
+    el.innerHTML = '<p class="text-xs text-slate-600">Waiting for assessment…</p>';
+    return;
+  }
+  const sentences = reasoning.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  if (sentences.length <= 1) {
+    el.innerHTML = `<p class="text-sm font-semibold leading-snug" style="color:${riskColor}">${reasoning}</p>`;
+    return;
+  }
+  const headline = sentences[0];
+  const rest = sentences.slice(1);
+  el.innerHTML = `
+    <p class="text-sm font-semibold leading-snug mb-2" style="color:${riskColor}">${headline}</p>
+    <div class="space-y-1">
+      ${rest.map(s =>
+        `<div class="flex items-start gap-2">
+           <span style="color:#475569;margin-top:2px;flex-shrink:0;user-select:none">·</span>
+           <span style="font-size:12px;color:#94a3b8;line-height:1.5">${s}</span>
+         </div>`
+      ).join('')}
+    </div>`;
+}
+
 function renderSummary(d) {
   const s = d.summary || {};
-  document.getElementById('s-risk').textContent  = s.at_risk ?? '—';
-  document.getElementById('s-watch').textContent = s.watching ?? '—';
-  document.getElementById('s-safe').textContent  = s.safe ?? '—';
-  document.getElementById('s-evac').textContent  = s.total_evac_capacity?.toLocaleString() ?? '—';
-  document.getElementById('s-sos').textContent   = s.active_sos ?? '0';
+  document.getElementById('s-risk').textContent   = s.at_risk ?? '—';
+  document.getElementById('s-states').textContent = s.states_at_risk ?? '—';
+  document.getElementById('s-watch').textContent  = s.watching ?? '—';
+  document.getElementById('s-safe').textContent   = s.safe ?? '—';
+  document.getElementById('s-evac').textContent   = s.total_evac_capacity?.toLocaleString() ?? '—';
+  document.getElementById('s-sos').textContent    = s.active_sos ?? '0';
 
-  const risk = d.overall_risk || 'SAFE';
-  const dot  = document.getElementById('statusDot');
+  const risk  = d.overall_risk || 'SAFE';
+  const color = RISK_COLOR[risk] || '#fff';
+  const dot   = document.getElementById('statusDot');
   dot.className = `dot pulse dot-${risk}`;
   document.getElementById('overallRisk').textContent = risk;
-  document.getElementById('overallRisk').style.color = RISK_COLOR[risk] || '#fff';
+  document.getElementById('overallRisk').style.color = color;
 
   if (d.last_updated) {
     const t = new Date(d.last_updated);
     document.getElementById('lastUpdated').textContent = 'Last cycle: ' + t.toLocaleTimeString('en-MY');
   }
 
-  // AI banner — situation summary
-  const aiEl = document.getElementById('aiReasoning');
-  aiEl.textContent = d.reasoning || 'No assessment yet';
-  aiEl.style.color = RISK_COLOR[risk] || '#e2e8f0';
-  document.getElementById('aiAction').textContent     = d.recommended_action ? '→ ' + d.recommended_action : '';
-  const isAI = d.assessment_source === 'claude';
-  const confEl = document.getElementById('aiConfidence');
-  const confWrap = confEl.parentElement;
+  // AI confidence chip
+  const isAI    = d.assessment_source === 'claude';
+  const confWrap = document.getElementById('aiConfidenceWrap');
   if (isAI) {
-    confWrap.style.display = '';
-    document.getElementById('aiConfidenceLabel').textContent = 'Confidence';
-    confEl.textContent = Math.round((d.confidence||0) * 100) + '%';
-    confEl.style.color = '$ s';
+    confWrap.classList.remove('hidden');
+    document.getElementById('aiConfidenceLabel').textContent = 'Claude AI';
+    const confEl = document.getElementById('aiConfidence');
+    confEl.textContent = Math.round((d.confidence || 0) * 100) + '% confidence';
+    confEl.style.color = color;
   } else {
-    confWrap.style.display = 'none';
+    confWrap.classList.add('hidden');
+  }
+
+  // Reasoning bullets
+  renderReasoningBullets(d.reasoning || '', color);
+
+  // Recommended action block
+  const actionBlock = document.getElementById('aiActionBlock');
+  const actionEl    = document.getElementById('aiAction');
+  if (d.recommended_action) {
+    actionEl.textContent = d.recommended_action;
+    actionBlock.classList.remove('hidden');
+  } else {
+    actionBlock.classList.add('hidden');
   }
 
   // Storm incoming bar
-  const storms = d.storm_warnings || [];
-  const stormBar  = document.getElementById('aiStormBar');
-  const stormText = document.getElementById('aiStormText');
+  const storms   = d.storm_warnings || [];
+  const stormBar = document.getElementById('aiStormBar');
   if (storms.length) {
-    stormText.textContent = storms
-      .map(s => `${s.district} — ${s.peak_mm}mm in ${s.eta_hours}h (${s.chance_pct}% probability)`)
+    document.getElementById('aiStormText').textContent = storms
+      .map(sw => `${sw.district} — ${sw.peak_mm}mm in ${sw.eta_hours}h (${sw.chance_pct}% probability)`)
       .join(' · ');
     stormBar.classList.remove('hidden');
   } else {
@@ -488,15 +705,13 @@ function renderSummary(d) {
   // Priority SOS bar
   const prio    = d.sos_priority;
   const prioBar = document.getElementById('aiPriorityBar');
-  const prioTxt = document.getElementById('aiPriorityText');
-  const prioBtn = document.getElementById('aiPriorityBtn');
   if (prio && prio.status !== 'dispatched') {
     const waitStr = prio.minutes_waiting < 60
       ? `${prio.minutes_waiting}min wait`
-      : `${Math.round(prio.minutes_waiting/60)}h wait`;
-    prioTxt.textContent =
-      `${prio.district} — ${prio.people_count} person(s), ${waitStr}, ${prio.district_status} zone (score ${prio.priority_score})`;
-    prioBtn.onclick = () => openDispatch(prio.case_id);
+      : `${Math.round(prio.minutes_waiting / 60)}h wait`;
+    document.getElementById('aiPriorityText').textContent =
+      `${prio.district} — ${prio.people_count} person(s), ${waitStr}, ${prio.district_status} zone`;
+    document.getElementById('aiPriorityBtn').onclick = () => openDispatch(prio.case_id);
     prioBar.classList.remove('hidden');
   } else {
     prioBar.classList.add('hidden');
@@ -510,32 +725,42 @@ function setFilter(f) {
     btn.className = `filter-btn${f === bf ? ' active-' + bf : ''}`;
   });
   renderDistricts(_allDistricts);
+  renderEvacSummary(_allDistricts);
 }
 
 function renderDistricts(districts) {
-  const filtered = _activeFilter === 'ALL' ? districts : districts.filter(d => d.status === _activeFilter);
+  let filtered = _stateFilter ? districts.filter(d => d.state === _stateFilter) : districts;
+  if (_activeFilter !== 'ALL') filtered = filtered.filter(d => d.status === _activeFilter);
+  const showState = !_stateFilter;
   const tbody = document.getElementById('districtTable');
+  const thState = document.getElementById('th-state');
+  if (thState) thState.style.display = showState ? '' : 'none';
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-600 text-xs">No districts match this filter.</td></tr>`;
+    const cols = showState ? 8 : 7;
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="py-6 text-center text-slate-600 text-xs">No districts match this filter.</td></tr>`;
     return;
   }
   tbody.innerHTML = filtered.map(d => {
-    const typeLabel = d.flood_type === 'flash_flood' ? 'Flash Flood' : 'River Overflow';
+    const typeLabel = d.flood_type === 'flash_flood' ? 'Flash' : 'River';
     const trend  = d.trend === 'rising' ? '⬆' : d.trend === 'easing' ? '⬇' : '→';
     const tColor = d.trend === 'rising' ? '#fbbf24' : d.trend === 'easing' ? '#4ade80' : '#94a3b8';
     const evac   = d.evac_centers > 0
-      ? `<span class="text-green-400">${d.evac_centers} open</span>`
+      ? `<span class="text-green-400">${d.evac_centers}</span>`
       : `<span class="text-slate-600">—</span>`;
+    const stateCell = showState
+      ? `<td class="py-2 text-slate-500 text-xs">${d.state||'—'}</td>`
+      : '';
     return `
       <tr class="row-${d.status} hover:bg-slate-800/30 transition-colors">
         <td class="py-2 pl-2 font-semibold text-white">${d.district}</td>
-        <td class="py-2 text-slate-400">${typeLabel}</td>
+        ${stateCell}
+        <td class="py-2 text-slate-400 text-xs">${typeLabel}</td>
         <td class="py-2 text-right text-blue-300">${(d.rainfall||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
         <td class="py-2 text-right" style="color:${tColor}">${trend} ${(d.forecast_2h||0).toFixed(1)}<span class="text-slate-500">mm</span></td>
         <td class="py-2 text-right text-cyan-300">${(d.river_level||0).toFixed(1)}<span class="text-slate-500">m</span></td>
         <td class="py-2 text-center">${evac}</td>
         <td class="py-2 text-center">
-          <span class="badge-${d.status} text-xs font-bold px-2 py-0.5 rounded-full">${d.status}</span>
+          <span class="badge-${d.status}">${d.status}</span>
         </td>
       </tr>`;
   }).join('');
@@ -676,8 +901,11 @@ function renderAgentFeed(comms) {
 
 function renderEvacSummary(districts) {
   const el = document.getElementById('evacSummary');
+  const labelEl = document.getElementById('evacStateLabel');
+  const srcDistricts = _stateFilter ? districts.filter(d => d.state === _stateFilter) : districts;
+  if (labelEl) labelEl.textContent = _stateFilter ? _stateFilter : 'All States';
   const centres = [];
-  for (const d of districts) {
+  for (const d of srcDistricts) {
     for (const c of (d.evac_centre_list || [])) {
       centres.push({ ...c, district: d.district, status: d.status });
     }
