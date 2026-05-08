@@ -715,6 +715,7 @@ function renderReasoningBullets(reasoning, riskColor) {
 }
 
 // Builds a state-focused summary from district data — no extra API call needed.
+// Shows the state breakdown first, then appends the full Claude global reasoning below.
 function renderStateFocus(state, districts, d) {
   const el = document.getElementById('aiReasoningBullets');
   const stateDistricts = districts.filter(x => x.state === state);
@@ -745,23 +746,49 @@ function renderStateFocus(state, districts, d) {
   if (byStatus.SAFE.length)
     bullets.push(`🟢 ${byStatus.SAFE.length} district${byStatus.SAFE.length>1?'s':''} clear`);
 
-  // Mention other states that have issues
+  // Include WATCH in other-states reminder (not just WARNING/DANGER)
   const otherAtRisk = {};
   districts.forEach(x => {
     if (!x.state || x.state === state) return;
-    if (x.status === 'DANGER' || x.status === 'WARNING') {
+    if (x.status === 'DANGER' || x.status === 'WARNING' || x.status === 'WATCH') {
       if (!otherAtRisk[x.state] || SO[x.status] > SO[otherAtRisk[x.state]])
         otherAtRisk[x.state] = x.status;
     }
   });
   const otherEntries = Object.entries(otherAtRisk);
+  let otherLine = '';
   if (otherEntries.length) {
     const parts = otherEntries.map(([s,r]) =>
-      `<span style="color:${RISK_COLOR[r]}">${s} (${r})</span>`
+      `<span style="color:${RISK_COLOR[r]||'#fde68a'}">${s} (${r})</span>`
     ).join(', ');
-    bullets.push(`⚠ Also active: ${parts}`);
+    otherLine = `
+      <div class="flex items-start gap-2 mt-1">
+        <span style="color:#475569;margin-top:2px;flex-shrink:0">·</span>
+        <span style="font-size:12px;color:#94a3b8;line-height:1.5">⚠ Other states: ${parts}</span>
+      </div>`;
   } else {
-    bullets.push('All other states are currently clear.');
+    otherLine = `
+      <div class="flex items-start gap-2 mt-1">
+        <span style="color:#475569;margin-top:2px;flex-shrink:0">·</span>
+        <span style="font-size:12px;color:#4ade80;line-height:1.5">All other states currently clear.</span>
+      </div>`;
+  }
+
+  // Claude global reasoning shown below the state summary (full AI context preserved)
+  let globalSection = '';
+  const reasoning = d?.reasoning;
+  if (reasoning && d?.assessment_source === 'claude') {
+    const sentences = reasoning.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    const globalBullets = sentences.map(s =>
+      `<div class="flex items-start gap-2">
+         <span style="color:#334155;margin-top:2px;flex-shrink:0;user-select:none">·</span>
+         <span style="font-size:11px;color:#64748b;line-height:1.5">${s}</span>
+       </div>`
+    ).join('');
+    globalSection = `
+      <div style="border-top:1px solid #1e3a5f;margin:10px 0 8px"></div>
+      <p class="text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#334155">AI Peninsula Overview</p>
+      <div class="space-y-1">${globalBullets}</div>`;
   }
 
   el.innerHTML = `
@@ -772,7 +799,9 @@ function renderStateFocus(state, districts, d) {
           <span style="color:#475569;margin-top:2px;flex-shrink:0;user-select:none">·</span>
           <span style="font-size:12px;color:#94a3b8;line-height:1.5">${b}</span>
         </div>`).join('')}
-    </div>`;
+      ${otherLine}
+    </div>
+    ${globalSection}`;
 
   // Update recommended action from the global assessment
   const actionBlock = document.getElementById('aiActionBlock');
