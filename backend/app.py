@@ -810,9 +810,10 @@ def _fetch_one_district(district: str) -> tuple[str, dict]:
     Returns (district, {precip, condition, forecast_1h, forecast_2h, rain_chance_max})
     """
     lat, lng = DISTRICT_COORDS[district]
+    # Request 2 days so we can look into tomorrow when current day runs out of hours
     resp = requests.get(
         "https://api.weatherapi.com/v1/forecast.json",
-        params={"key": _WEATHERAPI_KEY, "q": f"{lat},{lng}", "days": 1, "aqi": "no"},
+        params={"key": _WEATHERAPI_KEY, "q": f"{lat},{lng}", "days": 2, "aqi": "no"},
         timeout=10,
     )
     resp.raise_for_status()
@@ -822,10 +823,19 @@ def _fetch_one_district(district: str) -> tuple[str, dict]:
     precip    = float(cur.get("precip_mm", 0) or 0)
     condition = cur.get("condition", {}).get("text", "")
 
-    # Extract the next 2 hourly slots from the forecast
-    now_hour = datetime.now().hour
-    hours    = body.get("forecast", {}).get("forecastday", [{}])[0].get("hour", [])
-    upcoming = [h for h in hours if int(h.get("time", "00:00").split(" ")[1].split(":")[0]) > now_hour][:2]
+    # Use Malaysia local time (UTC+8) — server runs in UTC but WeatherAPI returns
+    # forecast hours in local time at the queried coordinates.
+    now_hour = (datetime.now(timezone.utc).hour + 8) % 24
+    forecastdays = body.get("forecast", {}).get("forecastday", [])
+    today_hours  = forecastdays[0].get("hour", []) if len(forecastdays) > 0 else []
+    tomorrow_hours = forecastdays[1].get("hour", []) if len(forecastdays) > 1 else []
+
+    # Take next 2 hours from today; spill into tomorrow when near midnight
+    upcoming = [h for h in today_hours
+                if int(h.get("time", "00:00").split(" ")[1].split(":")[0]) > now_hour]
+    if len(upcoming) < 2:
+        upcoming = upcoming + tomorrow_hours[: 2 - len(upcoming)]
+    upcoming = upcoming[:2]
 
     forecast_1h      = float(upcoming[0].get("precip_mm", 0)) if len(upcoming) > 0 else 0.0
     forecast_2h      = float(upcoming[1].get("precip_mm", 0)) if len(upcoming) > 1 else 0.0

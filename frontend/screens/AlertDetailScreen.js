@@ -93,21 +93,14 @@ export default function AlertDetailScreen({ route, navigation }) {
     setLoading(true);
     setError(null);
     try {
-      // Build single-station readings object for the API
-      const readings = {
-        [r.river]: {
-          level: r.river_level,
-          rainfall: r.rainfall_rate,
-          district: r.district,
-          station: r.station,
-        },
-      };
-      const data = await floodApi.analyze(readings);
+      // Pass null so the backend uses its full 43-district cached readings.
+      // Sending only one district's data caused Claude to report it couldn't
+      // evaluate the other 42 districts.
+      const data = await floodApi.analyze(null);
       setAssessment({
         ...data.assessment,
         anomaly_score: data.anomaly_score,
         timestamp: new Date().toISOString(),
-        readings,
       });
     } catch {
       setError("Could not get AI assessment. Check your connection.");
