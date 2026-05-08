@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from "react";
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
-  ActivityIndicator, StatusBar,
+  ActivityIndicator, StatusBar, Modal, TextInput, Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -65,6 +65,10 @@ export default function AlertDetailScreen({ route, navigation }) {
   const [assessment, setAssessment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [reportVisible, setReportVisible] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportSent, setReportSent] = useState(false);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
 
   // If we have a stored alert, use it directly; if we have a fresh reading, analyze it
   useEffect(() => {
@@ -127,6 +131,21 @@ export default function AlertDetailScreen({ route, navigation }) {
   const rp = riverPressure(primaryLevel);
 
   const canEvacuate = ["WARNING", "DANGER"].includes(risk);
+
+  const submitReport = async () => {
+    const district = title;
+    setReportSubmitting(true);
+    try {
+      await floodApi.reportFeedback(district, risk, reportReason);
+      setReportSent(true);
+      setReportVisible(false);
+      setReportReason("");
+    } catch {
+      Alert.alert("Error", "Could not send report. Please try again.");
+    } finally {
+      setReportSubmitting(false);
+    }
+  };
 
   return (
     <LinearGradient colors={["#0F172A", "#0F172A", "#131F35"]} style={{ flex: 1 }}>
@@ -345,9 +364,69 @@ export default function AlertDetailScreen({ route, navigation }) {
                   </Text>
                 </TouchableOpacity>
               )}
+
+              {/* False positive report */}
+              {reportSent ? (
+                <View style={styles.reportSentBox}>
+                  <Text style={styles.reportSentText}>
+                    Report received — thank you. Your feedback helps improve prediction accuracy.
+                  </Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.reportBtn}
+                  onPress={() => setReportVisible(true)}
+                >
+                  <Text style={styles.reportBtnText}>Report incorrect prediction</Text>
+                </TouchableOpacity>
+              )}
             </>
           )}
         </ScrollView>
+
+        {/* Report modal */}
+        <Modal
+          visible={reportVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setReportVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <Text style={styles.modalTitle}>Report Incorrect Prediction</Text>
+              <Text style={styles.modalSubtitle}>
+                District: {title}  ·  Predicted: {risk}
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Why do you think this is incorrect? (optional)"
+                placeholderTextColor="#64748b"
+                multiline
+                numberOfLines={3}
+                value={reportReason}
+                onChangeText={setReportReason}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalCancel}
+                  onPress={() => { setReportVisible(false); setReportReason(""); }}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalSubmit}
+                  onPress={submitReport}
+                  disabled={reportSubmitting}
+                >
+                  {reportSubmitting
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={styles.modalSubmitText}>Submit Report</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -449,4 +528,42 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   evacuateBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: 0.5 },
+
+  reportBtn: {
+    marginTop: 12, paddingVertical: 12, alignItems: "center",
+    borderWidth: 1, borderColor: "#334155", borderRadius: 10,
+  },
+  reportBtnText: { color: "#64748b", fontSize: 13, fontWeight: "600" },
+  reportSentBox: {
+    marginTop: 12, padding: 12, borderRadius: 10,
+    backgroundColor: "#0f2e1a", borderWidth: 1, borderColor: "#166534",
+  },
+  reportSentText: { color: "#4ade80", fontSize: 13, textAlign: "center", lineHeight: 20 },
+
+  modalOverlay: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center", alignItems: "center", padding: 24,
+  },
+  modalBox: {
+    backgroundColor: "#1E293B", borderRadius: 16, padding: 20,
+    width: "100%", borderWidth: 1, borderColor: "#334155",
+  },
+  modalTitle: { color: "#F1F5F9", fontSize: 16, fontWeight: "800", marginBottom: 4 },
+  modalSubtitle: { color: "#94A3B8", fontSize: 12, marginBottom: 14 },
+  modalInput: {
+    backgroundColor: "#0F172A", borderWidth: 1, borderColor: "#334155",
+    borderRadius: 8, padding: 10, color: "#F1F5F9", fontSize: 13,
+    textAlignVertical: "top", minHeight: 72, marginBottom: 16,
+  },
+  modalActions: { flexDirection: "row", gap: 10 },
+  modalCancel: {
+    flex: 1, paddingVertical: 11, alignItems: "center",
+    borderWidth: 1, borderColor: "#334155", borderRadius: 8,
+  },
+  modalCancelText: { color: "#94A3B8", fontSize: 14, fontWeight: "600" },
+  modalSubmit: {
+    flex: 1, paddingVertical: 11, alignItems: "center",
+    backgroundColor: "#1d4ed8", borderRadius: 8,
+  },
+  modalSubmitText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 });

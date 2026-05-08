@@ -62,6 +62,14 @@ export const floodApi = {
   resolveCase: (caseId, outcome = "Rescued successfully") =>
     post(`/api/rescue/resolve/${caseId}`, { outcome, officer: "Rescuer App" }),
 
+  /** Report a false positive prediction for a district. */
+  reportFeedback: (district, reportedRiskLevel, reason) =>
+    post("/api/feedback/report", {
+      district,
+      reported_risk_level: reportedRiskLevel,
+      reason: reason || "",
+    }),
+
   /** Liveness check. */
   health: () => get("/health"),
 };

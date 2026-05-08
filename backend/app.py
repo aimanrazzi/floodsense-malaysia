@@ -671,23 +671,112 @@ def _fetch_weatherapi_rainfall() -> dict:
     return result
 
 
+# ── GloFAS River Discharge (Open-Meteo) ──────────────────────────────────────
+# Free, no API key, globally accessible. Provides real river discharge (m³/s)
+# from the Copernicus GloFAS model — used as a river level proxy when the JPS
+# water level API is unreachable from Render's non-Malaysian servers.
+_GLOFAS_CACHE: dict = {"data": {}, "ts": 0.0}
+_GLOFAS_TTL   = 1800  # 30-min cache — GloFAS updates every 6h, no point refreshing every 60s
+
+
+def _fetch_one_glofas(district: str, lat: float, lng: float) -> tuple:
+    resp = requests.get(
+        "https://flood-api.open-meteo.com/v1/flood",
+        params={
+            "latitude": lat, "longitude": lng,
+            "daily": "river_discharge,river_discharge_mean_30y",
+            "forecast_days": 1,
+        },
+        timeout=8,
+    )
+    resp.raise_for_status()
+    daily    = resp.json().get("daily", {})
+    vals     = daily.get("river_discharge",          [None])
+    means    = daily.get("river_discharge_mean_30y", [None])
+    return district, {
+        "discharge": float(vals[0])  if vals  and vals[0]  is not None else None,
+        "mean_30y":  float(means[0]) if means and means[0] is not None else None,
+    }
+
+
+def _fetch_glofas_discharge() -> dict:
+    """
+    Fetch today's river discharge from Open-Meteo GloFAS for all districts.
+    Returns {district: {discharge: float|None, mean_30y: float|None}}.
+    Discharge is in m³/s. mean_30y is the 30-year climatological mean — used
+    to normalise the current reading without needing hard-coded thresholds.
+    """
+    global _GLOFAS_CACHE
+    if _GLOFAS_CACHE["data"] and time.time() - _GLOFAS_CACHE["ts"] < _GLOFAS_TTL:
+        return _GLOFAS_CACHE["data"]
+
+    result: dict = {}
+    try:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {
+                pool.submit(_fetch_one_glofas, d, lat, lng): d
+                for d, (lat, lng) in DISTRICT_COORDS.items()
+            }
+            for future in as_completed(futures):
+                d = futures[future]
+                try:
+                    _, data = future.result()
+                    result[d] = data
+                except Exception as e:
+                    logger.warning(f"[GloFAS] {d}: {e}")
+                    result[d] = {"discharge": None, "mean_30y": None}
+        covered = sum(1 for v in result.values() if v.get("discharge") is not None)
+        logger.info(f"[GloFAS] River discharge for {covered}/{len(result)} districts")
+        _GLOFAS_CACHE = {"data": result, "ts": time.time()}
+    except Exception as e:
+        logger.error(f"[GloFAS] Fetch failed: {e}")
+        return _GLOFAS_CACHE.get("data", {})
+
+    return result
+
+
+def _discharge_to_level(discharge: float, mean_30y: float, fallback: float) -> float:
+    """
+    Convert GloFAS discharge (m³/s) to a JPS-equivalent level (m).
+    Uses the 30-year climatological mean as a self-calibrating baseline so no
+    hard-coded thresholds are needed per river.
+    Ratio ≥ 4.0 → DANGER range (≥ 5.5m), ≥ 2.5 → WARNING, ≥ 1.8 → WATCH.
+    """
+    if discharge is None or mean_30y is None or mean_30y <= 0:
+        return fallback
+    ratio = discharge / mean_30y
+    if   ratio >= 4.0: return round(min(6.5, 5.5 + (ratio - 4.0) * 0.1), 2)
+    elif ratio >= 2.5: return round(3.5  + (ratio - 2.5) / 1.5 * 2.0,    2)
+    elif ratio >= 1.8: return round(3.0  + (ratio - 1.8) / 0.7 * 0.5,    2)
+    else:              return round(max(0.5, 1.5 + ratio * 0.35),          2)
+
+
 def fetch_jps_data() -> dict:
     """
-    Fetch live data from two sources:
-      - JPS WL API    → river_level for Selangor districts (live if reachable)
-      - WeatherAPI.com → precipitation mm/hr for ALL districts (station + radar fusion)
+    Fetch live data from three sources:
+      - JPS WL API      → river_level for Selangor districts (live if reachable)
+      - GloFAS/Open-Meteo → river discharge proxy when JPS is unreachable
+      - WeatherAPI.com  → precipitation mm/hr for ALL districts (station + radar fusion)
 
-    Merges both into the full JPS_FALLBACK structure so all 13 states are
-    always present. Falls back gracefully if either source fails.
+    Merges all into the full JPS_FALLBACK structure. Falls back gracefully if
+    any source fails.
     """
-    wl_data: dict = {}
-    rf_data: dict = {}
+    wl_data:     dict = {}
+    rf_data:     dict = {}
+    glofas_data: dict = {}
 
     try:
         wl_data = _fetch_jps_wl()
         logger.info(f"[JPS-WL] Live river levels for {len(wl_data)} districts")
     except Exception as e:
-        logger.warning(f"[JPS-WL] Unreachable ({e}) — using fallback levels")
+        logger.warning(f"[JPS-WL] Unreachable ({e}) — trying GloFAS fallback")
+
+    # Only call GloFAS if JPS didn't return everything we need
+    if len(wl_data) < len(DISTRICT_COORDS):
+        try:
+            glofas_data = _fetch_glofas_discharge()
+        except Exception as e:
+            logger.warning(f"[GloFAS] Unavailable ({e}) — using static fallback")
 
     try:
         rf_data = _fetch_weatherapi_rainfall()
@@ -700,42 +789,57 @@ def fetch_jps_data() -> dict:
 
     for river, base in JPS_FALLBACK.items():
         district = base["district"]
-        wl = wl_data.get(district)
+        wl       = wl_data.get(district)
         rf_entry = rf_data.get(district)
+        glofas   = glofas_data.get(district, {})
+
         if isinstance(rf_entry, dict):
-            rf_precip       = rf_entry.get("precip", None)
-            rf_condition    = rf_entry.get("condition", "")
-            rf_forecast_1h  = rf_entry.get("forecast_1h", 0.0)
-            rf_forecast_2h  = rf_entry.get("forecast_2h", 0.0)
-            rf_chance_max   = rf_entry.get("rain_chance_max", 0)
+            rf_precip      = rf_entry.get("precip", None)
+            rf_condition   = rf_entry.get("condition", "")
+            rf_forecast_1h = rf_entry.get("forecast_1h", 0.0)
+            rf_forecast_2h = rf_entry.get("forecast_2h", 0.0)
+            rf_chance_max  = rf_entry.get("rain_chance_max", 0)
         else:
             rf_precip = rf_entry
             rf_condition = rf_forecast_1h = rf_forecast_2h = ""
             rf_chance_max = 0
 
+        live_glofas = glofas.get("discharge") is not None
+
         if wl:
             level   = wl["level"]
             station = wl["station"]
+            level_source = "jps"
+        elif live_glofas:
+            level = _discharge_to_level(
+                glofas["discharge"], glofas.get("mean_30y"),
+                float(base["level"]),
+            )
+            station      = f"{base['station']} [GloFAS]"
+            level_source = "glofas"
         else:
-            level   = round(float(base["level"]) + float(rng.uniform(-0.1, 0.2)), 2)
-            station = base["station"]
+            level        = round(float(base["level"]) + float(rng.uniform(-0.1, 0.2)), 2)
+            station      = base["station"]
+            level_source = "static"
 
-        if rf_precip is not None:
-            rainfall = rf_precip
-        else:
-            rainfall = round(max(0.0, float(base["rainfall"]) + float(rng.uniform(-2, 5))), 1)
+        rainfall = (
+            rf_precip if rf_precip is not None
+            else round(max(0.0, float(base["rainfall"]) + float(rng.uniform(-2, 5))), 1)
+        )
 
         result[river] = {
-            "level":          level,
-            "rainfall":       rainfall,
-            "condition":      rf_condition,
-            "forecast_1h":    rf_forecast_1h,
-            "forecast_2h":    rf_forecast_2h,
+            "level":           level,
+            "rainfall":        rainfall,
+            "condition":       rf_condition,
+            "forecast_1h":     rf_forecast_1h,
+            "forecast_2h":     rf_forecast_2h,
             "rain_chance_max": rf_chance_max,
-            "district":       district,
-            "station":        station,
-            "live_wl":        wl is not None,
-            "live_rainfall":  rf_precip is not None,
+            "district":        district,
+            "station":         station,
+            "level_source":    level_source,
+            "live_wl":         wl is not None,
+            "live_glofas":     live_glofas,
+            "live_rainfall":   rf_precip is not None,
         }
 
     return result
@@ -851,6 +955,7 @@ _agent_comms:     list = []   # rolling log of inter-agent messages for dashboar
 _push_tokens:     list = []   # Expo push tokens registered by citizen app users
 _latest_storm_warnings: list = []  # most recent ForecastAgent storm cell warnings
 _last_cycle_at:   str  = ""   # ISO timestamp of last successful pipeline cycle
+_false_positive_reports: list = []  # citizen feedback reports stored before Firestore sync
 
 
 def _agent_msg(from_agent: str, to_agent: str, summary: str, payload: dict = None) -> dict:
@@ -1812,6 +1917,43 @@ def government_dashboard():
     # Inject the dashboard key so the browser JS can authenticate demo inject calls.
     # Jinja2 escapes the value automatically; empty string when key is not configured.
     return render_template_string(html, dashboard_key=_DASHBOARD_KEY)
+
+
+@app.route("/api/feedback/report", methods=["POST"])
+def feedback_report():
+    """Citizen reports a false positive prediction for a district."""
+    global _false_positive_reports
+    data     = request.get_json(silent=True) or {}
+    district = (data.get("district") or "").strip()
+    risk_lvl = (data.get("reported_risk_level") or "").strip().upper()
+    reason   = (data.get("reason") or "").strip()
+
+    if not district:
+        return jsonify({"error": "district required"}), 400
+
+    report = {
+        "district":             district,
+        "reported_risk_level":  risk_lvl or "UNKNOWN",
+        "reason":               reason or "No reason provided",
+        "timestamp":            _now().isoformat(),
+    }
+    _false_positive_reports.append(report)
+    _agent_msg(
+        "CitizenApp", "DataQualityAgent",
+        f"False-positive report for {district} ({risk_lvl}): {reason or 'no reason'}",
+        report,
+    )
+
+    # Persist to Firestore when available
+    if _firebase_initialized:
+        try:
+            import firebase_admin.firestore as _fs
+            db = _fs.client()
+            db.collection("false_positive_reports").add(report)
+        except Exception as exc:
+            logger.warning("[Feedback] Firestore write failed: %s", exc)
+
+    return jsonify({"status": "received", "report": report})
 
 
 @app.route("/health", methods=["GET"])
