@@ -522,6 +522,57 @@ let _dispatchCaseId = null;
 let _resolveCaseId  = null;
 let _allSosCases    = [];
 let _sosFilter      = 'active';
+let _knownSosIds       = new Set();
+let _knownCaseStatuses = {};
+
+function _requestNotifPermission() {
+  if ('Notification' in window && Notification.permission === 'default')
+    Notification.requestPermission();
+}
+
+function _beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880; osc.type = 'sine';
+    gain.gain.setValueAtTime(0.6, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.6);
+  } catch(e) {}
+}
+
+function _notifyResponder(c) {
+  _beep();
+  const name  = c.responder_name  || 'Volunteer';
+  const phone = c.responder_phone || '';
+  const body  = `${name}${phone ? ' · 📞 ' + phone : ''} is heading to ${c.district}`;
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const n = new Notification(`🚑 Responder on the way — ${c.district}`, {
+      body,
+      icon: '/static/logo.png',
+      tag:  (c.case_id || c.id) + '_respond',
+    });
+    n.onclick = () => { window.focus(); scrollToSOS(); n.close(); };
+  }
+  showToast(`🚑 Responder en route: ${name}${phone ? ' · ' + phone : ''} → ${c.district}`, '#1e3a5f');
+  document.getElementById('sosPanel')?.scrollIntoView({ behavior: 'smooth' });
+}
+
+function _notifyNewSOS(c) {
+  _beep();
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const n = new Notification(`🆘 New SOS — ${c.district}`, {
+      body: `${c.situation || 'Rescue needed'} · ${c.people_count || 1} person(s)${c.phone ? ' · 📞 ' + c.phone : ''}`,
+      icon: '/static/logo.png',
+      tag:  c.case_id,
+    });
+    n.onclick = () => { window.focus(); scrollToSOS(); n.close(); };
+  }
+  showToast(`🆘 New SOS: ${c.district} — ${c.situation || 'Rescue needed'}`, '#7f1d1d');
+  document.getElementById('sosPanel')?.scrollIntoView({ behavior: 'smooth' });
+}
 
 async function refresh() {
   try {
@@ -540,6 +591,24 @@ async function refresh() {
     if (sosRes.ok) {
       const sos = await sosRes.json();
       _allSosCases = sos.cases || [];
+      // Detect new cases and status changes — skip notifications on first load
+      const isFirstLoad = _knownSosIds.size === 0;
+      for (const c of _allSosCases) {
+        const id = c.case_id || c.id;
+        if (!id) continue;
+        if (!_knownSosIds.has(id)) {
+          // New case
+          if (!isFirstLoad && (c.status === 'received' || !c.status)) _notifyNewSOS(c);
+          _knownSosIds.add(id);
+        } else {
+          // Existing case — check for status change to "responding"
+          const prev = _knownCaseStatuses[id];
+          if (!isFirstLoad && prev && prev !== c.status && c.status === 'responding') {
+            _notifyResponder(c);
+          }
+        }
+        _knownCaseStatuses[id] = c.status;
+      }
       renderSOS(_allSosCases);
     }
   } catch(e) { console.error(e); }
@@ -782,6 +851,7 @@ function renderSOS(cases) {
   const responding = cases.filter(c => c.status === 'responding');
   const dispatched = cases.filter(c => c.status === 'dispatched');
   const resolved   = cases.filter(c => c.status === 'resolved');
+  const active     = [...open, ...responding];
 
   // Update rescue operations counters
   document.getElementById('rs-pending').textContent    = open.length;
@@ -800,7 +870,7 @@ function renderSOS(cases) {
     : resolved.length ? `All resolved (${resolved.length})` : 'No cases';
 
   let filtered = cases;
-  if (_sosFilter === 'active')     filtered = open;
+  if (_sosFilter === 'active')     filtered = active;
   if (_sosFilter === 'dispatched') filtered = dispatched;
   if (_sosFilter === 'resolved')   filtered = resolved;
 
@@ -820,17 +890,21 @@ function renderSOS(cases) {
         ? `https://maps.google.com/?q=${encodeURIComponent(c.address)}`
         : `https://maps.google.com/?q=${encodeURIComponent((c.district||'Kuala Lumpur') + ', Malaysia')}`;
     const pinLabel  = hasPinCoords ? '📍 Exact GPS pin' : c.address ? '📍 Address pin' : '📍 District area';
-    const isResolved = c.status === 'resolved';
+    const isResolved   = c.status === 'resolved';
     const isDispatched = c.status === 'dispatched';
+    const isResponding = c.status === 'responding';
 
-    const statusColor = isResolved ? 'text-green-400'
-      : isDispatched ? 'text-blue-400' : 'text-orange-400';
-    const statusLabel = isResolved ? 'RESOLVED' : isDispatched ? 'DISPATCHED' : 'PENDING';
+    const statusColor = isResolved   ? 'text-green-400'
+      : isDispatched ? 'text-blue-400'
+      : isResponding ? 'text-cyan-400' : 'text-orange-400';
+    const statusLabel = isResolved   ? 'RESOLVED'
+      : isDispatched ? 'DISPATCHED'
+      : isResponding ? 'RESPONDING' : 'PENDING';
 
     let actionBtn = '';
     if (isResolved) {
       actionBtn = `<span class="text-xs text-green-400 shrink-0 font-semibold">✅ Done</span>`;
-    } else if (isDispatched) {
+    } else if (isDispatched || isResponding) {
       actionBtn = `
         <button onclick="openResolve('${caseId}')" class="resolve-btn shrink-0">✅ Resolved</button>`;
     } else {
@@ -853,11 +927,17 @@ function renderSOS(cases) {
               ${c.people_count ? `<span class="text-xs text-yellow-400">👥 ${c.people_count} people</span>` : ''}
               <span class="text-xs text-slate-600">${c.timestamp ? new Date(c.timestamp).toLocaleTimeString('en-MY') : ''}</span>
               <a href="${mapsUrl}" target="_blank" class="text-xs text-blue-400 hover:text-blue-300 font-semibold">${pinLabel}</a>
+              ${c.phone ? `<a href="tel:${c.phone}" class="text-xs font-bold text-emerald-400 hover:text-emerald-300" style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:5px;padding:1px 7px">📞 ${c.phone}</a>` : ''}
             </div>
           </div>
           ${actionBtn}
         </div>
-        ${c.team    ? `<div class="mt-1.5 text-xs text-slate-400 border-t border-slate-800 pt-1.5">Team: <span class="text-white font-semibold">${c.team}</span></div>` : ''}
+        ${c.team ? `<div class="mt-1.5 text-xs text-slate-400 border-t border-slate-800 pt-1.5">Team: <span class="text-white font-semibold">${c.team}</span></div>` : ''}
+        ${c.responder_name ? `
+        <div class="mt-1.5 text-xs border-t border-slate-800 pt-1.5 flex items-center gap-2 flex-wrap" style="color:#67e8f9">
+          🚑 Responder: <span class="text-white font-semibold">${c.responder_name}</span>
+          ${c.responder_phone ? `<a href="tel:${c.responder_phone}" class="text-xs font-bold text-emerald-400 hover:text-emerald-300" style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:5px;padding:1px 7px">📞 ${c.responder_phone}</a>` : ''}
+        </div>` : ''}
         ${isResolved && c.outcome ? `<div class="mt-1 text-xs text-green-400 border-t border-slate-800 pt-1">Outcome: ${c.outcome}</div>` : ''}
       </div>`;
   }).join('');
@@ -1040,6 +1120,7 @@ async function confirmDemo() {
   }
 }
 
+_requestNotifPermission();
 refresh();
 setInterval(refresh, 15000);
 </script>

@@ -22,11 +22,18 @@ const FS = {
   border:  "#1E3A5F",
 };
 
-// KL/Selangor monitored districts only
 const DISTRICTS = [
-  "Klang","Gombak","Kepong","Cheras","Ampang",
-  "Petaling Jaya","Bangsar","Subang Jaya","Shah Alam",
-  "Kuala Selangor","Sepang",
+  "Klang","Gombak","Kepong","Cheras","Ampang","Petaling Jaya","Bangsar","Subang Jaya","Shah Alam","Kuala Selangor","Sepang",
+  "Johor Bahru","Kota Tinggi","Batu Pahat","Muar",
+  "Ipoh","Teluk Intan","Taiping",
+  "Kota Bharu","Pasir Mas","Kuala Krai",
+  "Kuala Terengganu","Kemaman",
+  "Kuantan","Temerloh","Pekan",
+  "Seremban","Port Dickson",
+  "Melaka Tengah","Alor Gajah",
+  "Alor Setar","Sungai Petani","Baling",
+  "Georgetown","Seberang Perai",
+  "Kangar",
 ];
 
 const STATUS_COLOR = {
@@ -44,6 +51,17 @@ const SITUATIONS = [
 
 const PEOPLE = ["1","2","3","4","5","6","7","8","10+"];
 
+function findDistrictFromGeocode(results) {
+  if (!results?.length) return null;
+  const g = results[0];
+  const candidates = [g.city, g.district, g.subLocality, g.name]
+    .filter(Boolean)
+    .map(s => s.toLowerCase());
+  return DISTRICTS.find(d =>
+    candidates.some(c => c.includes(d.toLowerCase()) || d.toLowerCase().includes(c))
+  ) || null;
+}
+
 const EMERGENCY = [
   { label: "Emergency", number: "999",        color: "#DC2626", icon: "🚨" },
   { label: "BOMBA",     number: "994",        color: "#EA580C", icon: "🚒" },
@@ -56,12 +74,14 @@ export default function RescueScreen({ navigation }) {
   const [situation,       setSituation]       = useState("");
   const [peopleCount,     setPeopleCount]     = useState("1");
   const [notes,           setNotes]           = useState("");
+  const [phone,           setPhone]           = useState("");
   const [submitting,      setSubmitting]      = useState(false);
   const [locating,        setLocating]        = useState(false);
   const [coords,          setCoords]          = useState(null);
   const [result,          setResult]          = useState(null);
-  const [districtStatuses, setDistrictStatuses] = useState({});  // { "Klang": "WARNING", ... }
-  const [statusLoading,   setStatusLoading]   = useState(true);
+  const [districtStatuses,  setDistrictStatuses]  = useState({});
+  const [statusLoading,     setStatusLoading]     = useState(true);
+  const [detectedDistrict,  setDetectedDistrict]  = useState(null);
 
   const call = (number) => Linking.openURL(`tel:${number}`);
 
@@ -86,28 +106,43 @@ export default function RescueScreen({ navigation }) {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Location Denied", "Enable location so rescuers can find you faster.");
+        Alert.alert("Location Required", "Location permission is required to submit an SOS. Enable it so your position can be verified and rescuers can find you.");
         return;
       }
-      // Use last known position immediately as a fallback while GPS locks
       const last = await Location.getLastKnownPositionAsync({});
       if (last) setCoords({ latitude: last.coords.latitude, longitude: last.coords.longitude });
 
-      // Then get a fresh high-accuracy fix
       const loc = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
         maximumAge: 0,
         timeout: 15000,
       });
-      setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+      const { latitude, longitude } = loc.coords;
+      setCoords({ latitude, longitude });
+
+      // Auto-detect district from GPS for verification
+      try {
+        const geocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const detected = findDistrictFromGeocode(geocode);
+        if (detected) {
+          setDetectedDistrict(detected);
+          if (!district) setDistrict(detected);
+        }
+      } catch {}
     } catch {
-      Alert.alert("Location Error", "Could not get your location. Describe it in the notes instead.");
+      Alert.alert("Location Error", "Could not get your location. This is required to submit an SOS.");
     } finally {
       setLocating(false);
     }
   };
 
+  const locationMismatch = detectedDistrict && district && detectedDistrict !== district;
+
   const handleSubmit = async () => {
+    if (!coords) {
+      Alert.alert("Location Required", "Share your location first to unlock SOS. This confirms you are physically in the area.");
+      return;
+    }
     if (!district)  { Alert.alert("Required", "Please select your district."); return; }
     if (!situation) { Alert.alert("Required", "Please select your situation type."); return; }
     if (isSafeZone) {
@@ -123,7 +158,7 @@ export default function RescueScreen({ navigation }) {
       const count = parseInt(peopleCount) || 1;
       const res = await floodApi.requestRescue(
         district, situation, count, notes,
-        coords?.latitude, coords?.longitude,
+        coords?.latitude, coords?.longitude, phone,
       );
       setResult(res);
     } catch (err) {
@@ -259,8 +294,8 @@ export default function RescueScreen({ navigation }) {
               ? <ActivityIndicator color={FS.primary} size="small" />
               : <Text style={[styles.gpsBtnText, coords && { color: FS.safe }]}>
                   {coords
-                    ? `GPS Locked · ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
-                    : "Share My Location (helps rescuers find you)"}
+                    ? `📍 Location Verified · ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`
+                    : "🔒 Tap to Share Location — Required to Unlock SOS"}
                 </Text>
             }
           </TouchableOpacity>
@@ -317,6 +352,14 @@ export default function RescueScreen({ navigation }) {
             </View>
           )}
 
+          {locationMismatch && (
+            <View style={[styles.safeWarning, { backgroundColor: "#422006", borderColor: "#d97706" }]}>
+              <Text style={[styles.safeWarningText, { color: "#fcd34d" }]}>
+                ⚠ Your GPS suggests you are near {detectedDistrict}, but you selected {district}. Please confirm you are in {district}.
+              </Text>
+            </View>
+          )}
+
           {/* Situation */}
           <Text style={styles.formLabel}>Situation Type</Text>
           <View style={styles.chipGrid}>
@@ -362,26 +405,44 @@ export default function RescueScreen({ navigation }) {
             onChangeText={setNotes}
           />
 
+          {/* Phone */}
+          <Text style={styles.formLabel}>
+            Contact Number <Text style={styles.optional}>(optional — so rescuers can call you)</Text>
+          </Text>
+          <TextInput
+            style={[styles.textInput, { minHeight: 0, paddingVertical: 13 }]}
+            placeholder="e.g. 0123456789"
+            placeholderTextColor="#4A6F8A"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={setPhone}
+          />
+
           <TouchableOpacity
             style={[
               styles.submitBtn,
-              (submitting || isSafeZone) && { opacity: 0.45 },
+              (!coords || submitting || isSafeZone) && { opacity: 0.45 },
+              !coords && { backgroundColor: "#334155" },
               isSafeZone && { backgroundColor: FS.safe },
             ]}
             onPress={handleSubmit}
-            disabled={submitting || isSafeZone}
+            disabled={!coords || submitting || isSafeZone}
             activeOpacity={0.8}
           >
             {submitting
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.submitText}>
-                  {isSafeZone ? "🔒  SOS Unavailable — Area is Safe" : "🆘  Submit Rescue Request"}
+                  {!coords
+                    ? "🔒  Share Location to Unlock SOS"
+                    : isSafeZone
+                    ? "🔒  SOS Unavailable — Area is Safe"
+                    : "🆘  Submit Rescue Request"}
                 </Text>
             }
           </TouchableOpacity>
 
           <Text style={styles.disclaimer}>
-            SOS submissions are restricted to flood-affected zones (WATCH / WARNING / DANGER) to prevent misuse.
+            Your GPS location is required to verify you are physically in the area. SOS is locked until location is shared and only available in WATCH / WARNING / DANGER zones.
             For immediate life-threatening danger, always call 999 first.
           </Text>
 

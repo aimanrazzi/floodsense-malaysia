@@ -41,12 +41,13 @@ export const floodApi = {
    * Submit a rescue / help request on behalf of a citizen in distress.
    * Returns { case_id, message, nearest_centre, emergency_contacts }.
    */
-  requestRescue: (district, situation, peopleCount, notes, latitude, longitude) =>
+  requestRescue: (district, situation, peopleCount, notes, latitude, longitude, phone) =>
     post("/api/rescue/request", {
       district,
       situation,
       people_count: peopleCount,
       notes: notes || "",
+      phone: phone || "",
       ...(latitude  != null && { latitude }),
       ...(longitude != null && { longitude }),
     }),
@@ -55,8 +56,11 @@ export const floodApi = {
   getRescueCases: () => get("/api/rescue/cases"),
 
   /** Volunteer commits to responding — moves status from received → responding. */
-  respondToCase: (caseId) =>
-    post(`/api/rescue/respond/${caseId}`, {}),
+  respondToCase: (caseId, responderName, responderPhone) =>
+    post(`/api/rescue/respond/${caseId}`, {
+      responder_name:  responderName  || "",
+      responder_phone: responderPhone || "",
+    }),
 
   /** Mark a case as resolved — only valid after responding. */
   resolveCase: (caseId, outcome = "Rescued successfully") =>

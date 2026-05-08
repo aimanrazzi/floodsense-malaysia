@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from "react";
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
-  ActivityIndicator, StatusBar, Modal, TextInput, Alert,
+  ActivityIndicator, StatusBar, Modal, Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -65,9 +65,8 @@ export default function AlertDetailScreen({ route, navigation }) {
   const [assessment, setAssessment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [reportVisible, setReportVisible] = useState(false);
-  const [reportReason, setReportReason] = useState("");
-  const [reportSent, setReportSent] = useState(false);
+  const [reportVisible,    setReportVisible]    = useState(false);
+  const [reportSent,       setReportSent]       = useState(false);
   const [reportSubmitting, setReportSubmitting] = useState(false);
 
   // If we have a stored alert, use it directly; if we have a fresh reading, analyze it
@@ -132,14 +131,16 @@ export default function AlertDetailScreen({ route, navigation }) {
 
   const canEvacuate = ["WARNING", "DANGER"].includes(risk);
 
-  const submitReport = async () => {
-    const district = title;
+  const submitReport = async (type) => {
     setReportSubmitting(true);
     try {
-      await floodApi.reportFeedback(district, risk, reportReason);
+      const reportedLevel = type === "happened" ? risk : "SAFE";
+      const reason = type === "happened"
+        ? "Flood confirmed by user on ground"
+        : "No flood observed — area was safe";
+      await floodApi.reportFeedback(title, reportedLevel, reason);
       setReportSent(true);
       setReportVisible(false);
-      setReportReason("");
     } catch {
       Alert.alert("Error", "Could not send report. Please try again.");
     } finally {
@@ -393,37 +394,39 @@ export default function AlertDetailScreen({ route, navigation }) {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>Report Incorrect Prediction</Text>
+              <Text style={styles.modalTitle}>What actually happened?</Text>
               <Text style={styles.modalSubtitle}>
-                District: {title}  ·  Predicted: {risk}
+                District: {title}  ·  AI predicted: {risk}
               </Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Why do you think this is incorrect? (optional)"
-                placeholderTextColor="#64748b"
-                multiline
-                numberOfLines={3}
-                value={reportReason}
-                onChangeText={setReportReason}
-              />
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.modalCancel}
-                  onPress={() => { setReportVisible(false); setReportReason(""); }}
-                >
-                  <Text style={styles.modalCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.modalSubmit}
-                  onPress={submitReport}
-                  disabled={reportSubmitting}
-                >
-                  {reportSubmitting
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Text style={styles.modalSubmitText}>Submit Report</Text>
-                  }
-                </TouchableOpacity>
-              </View>
+
+              <TouchableOpacity
+                style={[styles.reportOption, styles.reportOptionHappened, reportSubmitting && { opacity: 0.5 }]}
+                onPress={() => submitReport("happened")}
+                disabled={reportSubmitting}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.reportOptionTitle}>✅ Flood Happened</Text>
+                <Text style={styles.reportOptionSub}>Prediction was correct</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.reportOption, styles.reportOptionDidnt, reportSubmitting && { opacity: 0.5 }]}
+                onPress={() => submitReport("didnt")}
+                disabled={reportSubmitting}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.reportOptionTitle}>❌ Flood Did Not Happen</Text>
+                <Text style={styles.reportOptionSub}>This area was actually safe</Text>
+              </TouchableOpacity>
+
+              {reportSubmitting && <ActivityIndicator color="#3B82F6" style={{ marginVertical: 8 }} />}
+
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={() => setReportVisible(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -549,21 +552,22 @@ const styles = StyleSheet.create({
     width: "100%", borderWidth: 1, borderColor: "#334155",
   },
   modalTitle: { color: "#F1F5F9", fontSize: 16, fontWeight: "800", marginBottom: 4 },
-  modalSubtitle: { color: "#94A3B8", fontSize: 12, marginBottom: 14 },
-  modalInput: {
-    backgroundColor: "#0F172A", borderWidth: 1, borderColor: "#334155",
-    borderRadius: 8, padding: 10, color: "#F1F5F9", fontSize: 13,
-    textAlignVertical: "top", minHeight: 72, marginBottom: 16,
+  modalSubtitle: { color: "#94A3B8", fontSize: 12, marginBottom: 16 },
+  reportOption: {
+    borderRadius: 12, padding: 16, marginBottom: 10,
+    borderWidth: 1, alignItems: "center",
   },
-  modalActions: { flexDirection: "row", gap: 10 },
+  reportOptionHappened: {
+    backgroundColor: "rgba(22,163,74,0.12)", borderColor: "rgba(22,163,74,0.4)",
+  },
+  reportOptionDidnt: {
+    backgroundColor: "rgba(239,68,68,0.12)", borderColor: "rgba(239,68,68,0.35)",
+  },
+  reportOptionTitle: { color: "#F1F5F9", fontSize: 15, fontWeight: "800", marginBottom: 3 },
+  reportOptionSub:   { color: "#94A3B8", fontSize: 12 },
   modalCancel: {
-    flex: 1, paddingVertical: 11, alignItems: "center",
+    marginTop: 4, paddingVertical: 11, alignItems: "center",
     borderWidth: 1, borderColor: "#334155", borderRadius: 8,
   },
   modalCancelText: { color: "#94A3B8", fontSize: 14, fontWeight: "600" },
-  modalSubmit: {
-    flex: 1, paddingVertical: 11, alignItems: "center",
-    backgroundColor: "#1d4ed8", borderRadius: 8,
-  },
-  modalSubmitText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 });

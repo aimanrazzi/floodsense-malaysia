@@ -41,11 +41,13 @@ function timeAgo(isoString) {
 }
 
 export default function RescuerScreen({ navigation }) {
-  const [cases,      setCases]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error,      setError]      = useState(null);
-  const [resolving,  setResolving]  = useState(null); // case_id being resolved
+  const [cases,          setCases]          = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [refreshing,     setRefreshing]     = useState(false);
+  const [error,          setError]          = useState(null);
+  const [resolving,      setResolving]      = useState(null);
+  const [responderName,  setResponderName]  = useState("");
+  const [responderPhone, setResponderPhone] = useState("");
 
   const fetchCases = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -64,9 +66,12 @@ export default function RescuerScreen({ navigation }) {
   }, []);
 
   const handleRespond = useCallback((c) => {
+    const name  = responderName.trim();
+    const phone = responderPhone.trim();
+    const who   = name ? name : "You";
     Alert.alert(
       "Confirm Response",
-      `You are committing to help at ${c.district}. The dashboard will show you are on your way.`,
+      `${who} will be shown as responding to ${c.district}. The government dashboard will be notified immediately.${!name ? "\n\nTip: Add your name and phone above so the dashboard can contact you." : ""}`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -74,7 +79,7 @@ export default function RescuerScreen({ navigation }) {
           onPress: async () => {
             setResolving(c.case_id);
             try {
-              await floodApi.respondToCase(c.case_id);
+              await floodApi.respondToCase(c.case_id, name, phone);
               setCases(prev => prev.map(x =>
                 x.case_id === c.case_id ? { ...x, status: "responding" } : x
               ));
@@ -87,7 +92,7 @@ export default function RescuerScreen({ navigation }) {
         },
       ]
     );
-  }, []);
+  }, [responderName, responderPhone]);
 
   const handleResolve = useCallback((c) => {
     Alert.alert(
@@ -175,6 +180,31 @@ export default function RescuerScreen({ navigation }) {
               />
             }
           >
+            {/* Responder profile — shown always so they can fill it before responding */}
+            <View style={styles.profileBox}>
+              <Text style={styles.profileTitle}>Your Responder Profile</Text>
+              <Text style={styles.profileSub}>
+                Shown on the government dashboard when you respond to a case.
+              </Text>
+              <View style={styles.profileRow}>
+                <TextInput
+                  style={[styles.profileInput, { flex: 1 }]}
+                  placeholder="Your name (e.g. Ahmad)"
+                  placeholderTextColor="#4A6F8A"
+                  value={responderName}
+                  onChangeText={setResponderName}
+                />
+                <TextInput
+                  style={[styles.profileInput, { flex: 1 }]}
+                  placeholder="Phone (e.g. 0123456789)"
+                  placeholderTextColor="#4A6F8A"
+                  keyboardType="phone-pad"
+                  value={responderPhone}
+                  onChangeText={setResponderPhone}
+                />
+              </View>
+            </View>
+
             {cases.length === 0 ? (
               <View style={styles.emptyBox}>
                 <Text style={styles.emptyIcon}>✅</Text>

@@ -1128,36 +1128,47 @@ def classify_risk_with_claude(readings: dict, anomaly_score: float) -> dict:
 
     readings_str = json.dumps(readings, indent=2)
 
-    prompt = f"""You are a flood risk assessment agent for Malaysia. You understand two distinct flood types:
+    prompt = f"""You are a flood risk assessment agent monitoring 43 districts across 11 peninsular Malaysian states.
 
-1. FLASH FLOOD (banjir kilat) — KL/Selangor urban districts (Klang, Gombak, Kepong, Cheras, Ampang, Petaling Jaya, Bangsar, Subang Jaya, Shah Alam)
-   - Caused by heavy rainfall overwhelming KL's drainage infrastructure
-   - Thresholds (hourly accumulated mm): Watch ≥15mm/hr | Warning ≥30mm/hr | Danger ≥50mm/hr
-   - Use composite score: if current rain is moderate (≥5mm) AND forecast_2h shows heavy incoming (≥25mm), raise risk proactively
-   - River level is a secondary lagging indicator
+FLOOD TYPE REFERENCE — apply the correct thresholds per district:
 
-2. RIVER OVERFLOW FLOOD — Selangor rural zones (Kuala Selangor, Sepang)
-   - Caused by rivers exceeding banks after sustained upstream rainfall
-   - Primary trigger: JPS river level — Watch ≥3.0m | Warning ≥4.5m | Danger ≥5.5m
-   - Rainfall + forecast accelerate river rise but level is the key metric
+1. FLASH FLOOD (Banjir Kilat) — urban drainage-driven risk:
+   Selangor: Klang, Gombak, Kepong, Cheras, Ampang, Petaling Jaya, Bangsar, Subang Jaya, Shah Alam
+   Johor: Johor Bahru | Perak: Ipoh, Sungai Petani | Kelantan: Kota Bharu
+   Terengganu: Kuala Terengganu | Pahang: Kuantan | Negeri Sembilan: Seremban
+   Melaka: Melaka Tengah | Kedah: Alor Setar | Pulau Pinang: Georgetown, Seberang Perai | Perlis: Kangar
+   Thresholds (mm/hr): Watch ≥15 | Warning ≥30 | Danger ≥50
+   Composite rule: current rain ≥5mm AND forecast_2h ≥25mm → raise risk level proactively
 
-Current readings (includes live rainfall + 2-hour forecast per district): {readings_str}
+2. RIVER OVERFLOW (Banjir Sungai) — riverside/rural zones:
+   Selangor: Kuala Selangor, Sepang | Johor: Kota Tinggi, Batu Pahat, Muar
+   Perak: Teluk Intan, Taiping | Kelantan: Pasir Mas, Kuala Krai
+   Terengganu: Kemaman | Pahang: Temerloh, Pekan
+   Negeri Sembilan: Port Dickson | Melaka: Alor Gajah | Kedah: Baling
+   Thresholds (river level m, GloFAS-normalised): Watch ≥3.0 | Warning ≥4.5 | Danger ≥5.5
+   Forecast rule: forecast_2h ≥25mm with rain_chance_max ≥60% → river rise expected within 2h
+
+Current readings — all 43 districts (live rainfall + 2h forecast per district):
+{readings_str}
 ML anomaly score: {anomaly_score:.3f}
 
-Rules:
-- For FLASH FLOOD districts: base reasoning on rainfall AND forecast_1h/forecast_2h. If forecast shows significantly more rain incoming (e.g. >15mm in next 2h), raise risk proactively.
-- For RIVER OVERFLOW districts: base reasoning on river level vs JPS thresholds. Forecast rain accelerates river rise.
-- Use forecast_1h, forecast_2h, and rain_chance_max to decide if risk is RISING even if current rain is low.
-- reasoning must clearly state the flood type, primary metric, AND whether risk is current or forecast-driven.
+Assessment rules:
+- Evaluate EVERY district against its correct flood type thresholds above.
+- overall risk_level = worst status found across all 43 districts.
+- affected_districts = every district at WATCH or above.
+- Structure reasoning by STATE: start with the most critical state/district, then work down. Group safe states into one closing sentence.
+- For each affected district: name it, its state, flood type, and key metric (e.g. "Gombak (Selangor) — flash flood, 42mm/hr").
+- Use forecast_1h, forecast_2h, rain_chance_max to flag rising risk even when current readings are low.
+- End reasoning with one word on trajectory: stable / escalating / easing.
 
 Respond ONLY in this exact JSON format:
 {{
   "risk_level": "SAFE|WATCH|WARNING|DANGER",
-  "affected_districts": ["list of districts"],
+  "affected_districts": ["every district at WATCH or above"],
   "estimated_time_to_critical": "X hours or N/A",
   "confidence": 0.0-1.0,
-  "recommended_action": "one clear action for residents",
-  "reasoning": "2-3 sentences giving an overall situational summary for the government operations centre. List EVERY district currently at WARNING or DANGER level by name, their flood type (flash flood / river overflow), and their key metric (e.g. 58mm/hr rainfall or 5.2m river level). If no districts are at WARNING or DANGER, summarise the watch-level districts or state that all monitored areas are currently safe. End with whether the overall situation is stable, escalating, or easing."
+  "recommended_action": "one clear action sentence for the operations centre",
+  "reasoning": "State-by-state situation summary. Lead with the most critical state and district. For each affected state name the district(s), flood type, and key metric. Close with one sentence on all safe states. End with trajectory: stable/escalating/easing."
 }}"""
 
     try:
@@ -1897,6 +1908,7 @@ def rescue_request():
     situation  = data.get("situation", "Stranded")
     people     = int(data.get("people_count", 1))
     notes      = data.get("notes", "")
+    phone      = (data.get("phone") or "").strip()
     latitude   = data.get("latitude")
     longitude  = data.get("longitude")
 
@@ -1941,6 +1953,7 @@ def rescue_request():
         "situation":    situation,
         "people_count": people,
         "notes":        notes,
+        "phone":        phone,
         "latitude":     latitude,
         "longitude":    longitude,
         "maps_link":    maps_link,
@@ -2044,20 +2057,27 @@ def dispatch_rescue(case_id):
 @app.route("/api/rescue/respond/<case_id>", methods=["POST"])
 def respond_rescue(case_id):
     """POST /api/rescue/respond/<case_id> — Volunteer commits to responding to a case."""
+    body = request.json or {}
+    responder_name  = (body.get("responder_name")  or "").strip()
+    responder_phone = (body.get("responder_phone") or "").strip()
     for case in _rescue_cases:
         if case.get("id") == case_id or case.get("case_id") == case_id:
             if case.get("status") == "dispatched":
                 return jsonify({"error": "Official team already dispatched"}), 409
-            case["status"]       = "responding"
-            case["responded_at"] = _now().isoformat()
+            case["status"]          = "responding"
+            case["responded_at"]    = _now().isoformat()
+            case["responder_name"]  = responder_name or "Volunteer"
+            case["responder_phone"] = responder_phone
             if _firebase_initialized and _firestore_db:
                 try:
                     _firestore_db.collection("rescue_requests").document(case_id).update({
                         "status": "responding", "responded_at": case["responded_at"],
+                        "responder_name": case["responder_name"],
+                        "responder_phone": responder_phone,
                     })
                 except Exception:
                     pass
-            logger.info(f"[Rescue] Case {case_id} — volunteer responding")
+            logger.info(f"[Rescue] Case {case_id} — volunteer responding: {case['responder_name']}")
             return jsonify({"success": True, "case": case})
     return jsonify({"error": "Case not found"}), 404
 
