@@ -313,6 +313,10 @@ export default function FloodMapScreen({ navigation }) {
                 <View style={[styles.yourAreaDrainBadge, { backgroundColor: ds.color + "33", borderColor: ds.color }]}>
                   <Text style={[styles.yourAreaDrainText, { color: ds.color }]}>{ds.label}</Text>
                 </View>
+                <View style={styles.yourAreaMetric}>
+                  <Text style={[styles.yourAreaBigNum, { color: FS.subtext, fontSize: 18 }]}>{userAreaData.river_level.toFixed(1)}</Text>
+                  <Text style={styles.yourAreaUnit}>m</Text>
+                </View>
               </>
             ) : (
               <>
@@ -381,15 +385,13 @@ export default function FloodMapScreen({ navigation }) {
                 <View style={[styles.drainBadge, { backgroundColor: ds.color + "33", borderColor: ds.color }]}>
                   <Text style={[styles.drainBadgeText, { color: ds.color }]}>{ds.label}</Text>
                 </View>
-                <Text style={styles.metricLabel}>{tf.drainStress}</Text>
+                <Text style={styles.metricLabel}>Intensity</Text>
               </View>
               <View style={styles.metricDivider} />
               <View style={styles.metric}>
-                <Text style={styles.metricIcon}>⛅</Text>
-                <Text style={[styles.metricValue, { fontSize: 9 }]} numberOfLines={2}>
-                  {item.condition || "Clear"}
-                </Text>
-                <Text style={styles.metricLabel}>Weather</Text>
+                <Text style={styles.metricIcon}>🌊</Text>
+                <Text style={styles.metricValue}>{item.river_level.toFixed(1)}m</Text>
+                <Text style={styles.metricLabel}>{tf.riverLevel}</Text>
               </View>
             </>
           ) : (
@@ -407,37 +409,15 @@ export default function FloodMapScreen({ navigation }) {
               </View>
               <View style={styles.metricDivider} />
               <View style={styles.metric}>
-                <Text style={styles.metricIcon}>📡</Text>
-                <Text style={[styles.metricValue, { fontSize: 10 }]} numberOfLines={1}>{item.station}</Text>
-                <Text style={styles.metricLabel}>{tf.jpsMonitor}</Text>
+                <Text style={styles.metricIcon}>⛅</Text>
+                <Text style={[styles.metricValue, { fontSize: 9 }]} numberOfLines={2}>
+                  {item.condition || "Clear"}
+                </Text>
+                <Text style={styles.metricLabel}>Weather</Text>
               </View>
             </>
           )}
         </View>
-
-        {isFlash ? (
-          <>
-            <View style={styles.levelBarBg}>
-              <View style={[styles.levelBarFill, { width: `${Math.min((item.rainfall_rate / 80) * 100, 100)}%`, backgroundColor: color }]} />
-            </View>
-            <View style={styles.levelBarLabels}>
-              <Text style={styles.levelBarLabel}>0mm/hr</Text>
-              <Text style={styles.levelBarLabel}>{tf.heavy30}</Text>
-              <Text style={styles.levelBarLabel}>{tf.danger70}</Text>
-            </View>
-          </>
-        ) : (
-          <>
-            <View style={styles.levelBarBg}>
-              <View style={[styles.levelBarFill, { width: `${Math.min((item.river_level / 6.5) * 100, 100)}%`, backgroundColor: color }]} />
-            </View>
-            <View style={styles.levelBarLabels}>
-              <Text style={styles.levelBarLabel}>0m</Text>
-              <Text style={styles.levelBarLabel}>{tf.normal3m}</Text>
-              <Text style={styles.levelBarLabel}>{tf.danger55m}</Text>
-            </View>
-          </>
-        )}
 
         {(() => {
           const peak  = Math.max(item.forecast_1h || 0, item.forecast_2h || 0);
