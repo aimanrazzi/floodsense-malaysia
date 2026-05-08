@@ -26,21 +26,70 @@ const STATUS_COLOR = { DANGER: FS.danger, WARNING: FS.warning, WATCH: FS.watch, 
 const URBAN_SET = new Set([
   "Klang","Gombak","Kepong","Cheras","Ampang",
   "Petaling Jaya","Bangsar","Subang Jaya","Shah Alam",
+  "Johor Bahru","Ipoh","Kota Bharu","Kuala Terengganu",
+  "Kuantan","Seremban","Melaka Tengah",
+  "Alor Setar","Sungai Petani","Georgetown","Seberang Perai","Kangar",
 ]);
 
 const MONITOR_COORDS = {
-  "Klang":          [3.0449, 101.4468],
-  "Gombak":         [3.2353, 101.7044],
-  "Kepong":         [3.2119, 101.6293],
-  "Cheras":         [3.0945, 101.7455],
-  "Ampang":         [3.1478, 101.7618],
-  "Petaling Jaya":  [3.1073, 101.6067],
-  "Bangsar":        [3.1302, 101.6741],
-  "Subang Jaya":    [3.0565, 101.5897],
-  "Shah Alam":      [3.0733, 101.5185],
-  "Kuala Selangor": [3.3474, 101.2442],
-  "Sepang":         [2.7305, 101.7164],
+  "Klang":             [3.0449, 101.4468],
+  "Gombak":            [3.2353, 101.7044],
+  "Kepong":            [3.2119, 101.6293],
+  "Cheras":            [3.0945, 101.7455],
+  "Ampang":            [3.1478, 101.7618],
+  "Petaling Jaya":     [3.1073, 101.6067],
+  "Bangsar":           [3.1302, 101.6741],
+  "Subang Jaya":       [3.0565, 101.5897],
+  "Shah Alam":         [3.0733, 101.5185],
+  "Kuala Selangor":    [3.3474, 101.2442],
+  "Sepang":            [2.7305, 101.7164],
+  "Johor Bahru":       [1.4927, 103.7414],
+  "Kota Tinggi":       [1.7337, 103.9017],
+  "Batu Pahat":        [1.8547, 102.9346],
+  "Muar":              [2.0444, 102.5689],
+  "Ipoh":              [4.5975, 101.0901],
+  "Teluk Intan":       [4.0229, 101.0227],
+  "Taiping":           [4.8500, 100.7333],
+  "Kota Bharu":        [6.1254, 102.2381],
+  "Pasir Mas":         [6.0500, 102.1333],
+  "Kuala Krai":        [5.5333, 102.2000],
+  "Kuala Terengganu":  [5.3302, 103.1408],
+  "Kemaman":           [4.2333, 103.4167],
+  "Kuantan":           [3.8077, 103.3260],
+  "Temerloh":          [3.4500, 102.4167],
+  "Pekan":             [3.4883, 103.3887],
+  "Seremban":          [2.7297, 101.9381],
+  "Port Dickson":      [2.5234, 101.7966],
+  "Melaka Tengah":     [2.1972, 102.2501],
+  "Alor Gajah":        [2.3799, 102.2061],
+  "Alor Setar":        [6.1184, 100.3686],
+  "Sungai Petani":     [5.6479, 100.4883],
+  "Baling":            [5.6833, 100.9167],
+  "Georgetown":        [5.4141, 100.3288],
+  "Seberang Perai":    [5.3971, 100.3985],
+  "Kangar":            [6.4414, 100.1986],
 };
+
+const DISTRICT_TO_STATE = {
+  "Klang":"Selangor","Gombak":"Selangor","Kepong":"Selangor","Cheras":"Selangor",
+  "Ampang":"Selangor","Petaling Jaya":"Selangor","Bangsar":"Selangor",
+  "Subang Jaya":"Selangor","Shah Alam":"Selangor","Kuala Selangor":"Selangor","Sepang":"Selangor",
+  "Johor Bahru":"Johor","Kota Tinggi":"Johor","Batu Pahat":"Johor","Muar":"Johor",
+  "Ipoh":"Perak","Teluk Intan":"Perak","Taiping":"Perak",
+  "Kota Bharu":"Kelantan","Pasir Mas":"Kelantan","Kuala Krai":"Kelantan",
+  "Kuala Terengganu":"Terengganu","Kemaman":"Terengganu",
+  "Kuantan":"Pahang","Temerloh":"Pahang","Pekan":"Pahang",
+  "Seremban":"Negeri Sembilan","Port Dickson":"Negeri Sembilan",
+  "Melaka Tengah":"Melaka","Alor Gajah":"Melaka",
+  "Alor Setar":"Kedah","Sungai Petani":"Kedah","Baling":"Kedah",
+  "Georgetown":"Pulau Pinang","Seberang Perai":"Pulau Pinang",
+  "Kangar":"Perlis",
+};
+
+const STATE_LIST = [
+  "Selangor","Johor","Perak","Kelantan","Terengganu",
+  "Pahang","Negeri Sembilan","Melaka","Kedah","Pulau Pinang","Perlis",
+];
 
 function nearestDistrict(userLat, userLng) {
   let best = null, bestDist = Infinity;
@@ -85,11 +134,14 @@ export default function FloodMapScreen({ navigation }) {
   const [prevOverallRisk,  setPrevOverallRisk]  = useState("SAFE");
   const [activeTab,        setActiveTab]        = useState(0);
   const [langDropdownOpen, setLangDropdownOpen] = useState(false);
+  const [selectedState,    setSelectedState]    = useState(null); // null = All Peninsula
 
   // GPS state
   const [userDistrict,    setUserDistrict]    = useState(null);
   const [locationDenied,  setLocationDenied]  = useState(false);
   const [locationLoading, setLocationLoading] = useState(true);
+
+  const userState = userDistrict ? (DISTRICT_TO_STATE[userDistrict] || null) : null;
 
   const bannerAnim = useRef(new Animated.Value(0)).current;
   const hScrollRef = useRef(null);
@@ -130,11 +182,21 @@ export default function FloodMapScreen({ navigation }) {
     })();
   }, []);
 
-  // ── Risk aggregation ────────────────────────────────────────────────────────
-  const overallRisk = levels.reduce((worst, item) => {
-    const ord = { DANGER: 4, WARNING: 3, WATCH: 2, SAFE: 1 };
-    return (ord[item.status] || 0) > (ord[worst] || 0) ? item.status : worst;
-  }, "SAFE");
+  // Auto-select user's state when GPS resolves (only if still on "All")
+  useEffect(() => {
+    if (userDistrict && selectedState === null) {
+      const s = DISTRICT_TO_STATE[userDistrict];
+      if (s) setSelectedState(s);
+    }
+  }, [userDistrict]);
+
+  // ── Risk aggregation (banner: user's own state only, not browsed state) ──────
+  const overallRisk = levels
+    .filter(i => !userState || (i.state || "Selangor") === userState)
+    .reduce((worst, item) => {
+      const ord = { DANGER: 4, WARNING: 3, WATCH: 2, SAFE: 1 };
+      return (ord[item.status] || 0) > (ord[worst] || 0) ? item.status : worst;
+    }, "SAFE");
 
   useEffect(() => {
     if (overallRisk !== prevOverallRisk) {
@@ -156,9 +218,12 @@ export default function FloodMapScreen({ navigation }) {
     }).start();
   }, [showBanner]);
 
-  // ── District splits ─────────────────────────────────────────────────────────
-  const flashZones  = levels.filter(i => URBAN_SET.has(i.district));
-  const riverZones  = levels.filter(i => !URBAN_SET.has(i.district));
+  // ── District splits — filtered by selected state ──────────────────────────
+  const displayLevels = selectedState
+    ? levels.filter(i => (i.state || "Selangor") === selectedState)
+    : levels;
+  const flashZones  = displayLevels.filter(i => URBAN_SET.has(i.district));
+  const riverZones  = displayLevels.filter(i => !URBAN_SET.has(i.district));
   const flashAlerts = flashZones.filter(i => i.status !== "SAFE").length;
   const riverAlerts = riverZones.filter(i => i.status !== "SAFE").length;
 
@@ -556,6 +621,58 @@ export default function FloodMapScreen({ navigation }) {
               <YourAreaSection />
             </View>
 
+            {/* State filter chips */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.stateChipsRow}
+              style={styles.stateChipsWrap}
+            >
+              {/* All Peninsula chip */}
+              <TouchableOpacity
+                style={[styles.stateChip, !selectedState && styles.stateChipActive]}
+                onPress={() => setSelectedState(null)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.stateChipText, !selectedState && styles.stateChipTextActive]}>
+                  All Peninsula
+                </Text>
+              </TouchableOpacity>
+
+              {STATE_LIST.map(state => {
+                const isActive  = selectedState === state;
+                const isHome    = state === userState;
+                const alerts    = levels.filter(i => (i.state || "Selangor") === state && i.status !== "SAFE").length;
+                return (
+                  <TouchableOpacity
+                    key={state}
+                    style={[styles.stateChip, isActive && styles.stateChipActive, isHome && !isActive && styles.stateChipHome]}
+                    onPress={() => setSelectedState(state)}
+                    activeOpacity={0.75}
+                  >
+                    {isHome && <Text style={styles.stateChipPin}>📍</Text>}
+                    <Text style={[styles.stateChipText, isActive && styles.stateChipTextActive, isHome && !isActive && styles.stateChipTextHome]}>
+                      {state}
+                    </Text>
+                    {alerts > 0 && (
+                      <View style={[styles.stateChipBadge, {backgroundColor: alerts > 2 ? FS.danger : FS.warning}]}>
+                        <Text style={styles.stateChipBadgeText}>{alerts}</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Browsing notice — shown when viewing a different state */}
+            {selectedState && selectedState !== userState && userState && (
+              <View style={styles.browsingNotice}>
+                <Text style={styles.browsingNoticeText}>
+                  Browsing {selectedState} · Notifications active for {userState} only
+                </Text>
+              </View>
+            )}
+
             {/* Tab bar */}
             <View style={styles.tabBar}>
               <TouchableOpacity style={[styles.tabBtn, activeTab === 0 && styles.tabBtnActive]} onPress={() => scrollToTab(0)} activeOpacity={0.8}>
@@ -810,4 +927,29 @@ const styles = StyleSheet.create({
   },
   sosBtnIcon: { fontSize: 22, lineHeight: 26 },
   sosBtnText: { fontSize: 10, fontWeight: "900", color: "#fff", letterSpacing: 1 },
+
+  // State chips
+  stateChipsWrap: { maxHeight: 44, marginBottom: 6 },
+  stateChipsRow: { paddingHorizontal: 16, gap: 6, alignItems: "center" },
+  stateChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1, borderColor: FS.border,
+    backgroundColor: FS.surface,
+  },
+  stateChipActive: { backgroundColor: FS.primary, borderColor: FS.primary },
+  stateChipHome:   { borderColor: FS.primary + "88" },
+  stateChipPin:    { fontSize: 10 },
+  stateChipText:       { fontSize: 12, fontWeight: "700", color: FS.subtext },
+  stateChipTextActive: { color: "#fff" },
+  stateChipTextHome:   { color: FS.primary },
+  stateChipBadge:      { borderRadius: 6, paddingHorizontal: 4, paddingVertical: 1, minWidth: 16, alignItems: "center" },
+  stateChipBadgeText:  { color: "#fff", fontSize: 10, fontWeight: "900" },
+
+  browsingNotice: {
+    marginHorizontal: 16, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: FS.primary + "18", borderRadius: 8, borderWidth: 1,
+    borderColor: FS.primary + "44",
+  },
+  browsingNoticeText: { fontSize: 11, color: FS.primary, fontWeight: "600", textAlign: "center" },
 });

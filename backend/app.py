@@ -116,6 +116,41 @@ JPS_FALLBACK = {
     # ── River Overflow Zones (Selangor rivers) ──
     "Sungai Selangor":     {"level": 2.5, "rainfall": 11.0, "district": "Kuala Selangor","station": "Rasa"},
     "Sungai Langat":       {"level": 2.3, "rainfall": 9.5,  "district": "Sepang",        "station": "Dengkil"},
+    # ── Johor ──
+    "Sungai Segget":       {"level": 1.8, "rainfall":  9.0, "district": "Johor Bahru",       "station": "JB City Centre"},
+    "Sungai Johor":        {"level": 2.6, "rainfall": 12.0, "district": "Kota Tinggi",        "station": "Kota Tinggi"},
+    "Sungai Batu Pahat":   {"level": 2.7, "rainfall": 11.0, "district": "Batu Pahat",         "station": "Batu Pahat"},
+    "Sungai Muar":         {"level": 2.5, "rainfall": 10.0, "district": "Muar",               "station": "Muar"},
+    # ── Perak ──
+    "Sungai Kinta":        {"level": 2.0, "rainfall":  8.0, "district": "Ipoh",               "station": "Ipoh Town"},
+    "Sungai Perak":        {"level": 2.8, "rainfall": 14.0, "district": "Teluk Intan",         "station": "Teluk Intan"},
+    "Sungai Larut":        {"level": 2.3, "rainfall": 10.0, "district": "Taiping",             "station": "Taiping"},
+    # ── Kelantan ──
+    "Sungai Kelantan":     {"level": 2.9, "rainfall": 18.0, "district": "Kota Bharu",          "station": "Kota Bharu"},
+    "Sungai Golok":        {"level": 2.8, "rainfall": 16.0, "district": "Pasir Mas",           "station": "Pasir Mas"},
+    "Sungai Galas":        {"level": 2.7, "rainfall": 15.0, "district": "Kuala Krai",          "station": "Kuala Krai"},
+    # ── Terengganu ──
+    "Sungai Terengganu":   {"level": 2.4, "rainfall": 13.0, "district": "Kuala Terengganu",    "station": "Kuala Terengganu"},
+    "Sungai Kemaman":      {"level": 2.2, "rainfall": 11.0, "district": "Kemaman",             "station": "Kemaman"},
+    # ── Pahang ──
+    "Sungai Kuantan":      {"level": 2.0, "rainfall": 10.0, "district": "Kuantan",             "station": "Kuantan"},
+    "Sungai Pahang":       {"level": 2.8, "rainfall": 15.0, "district": "Temerloh",            "station": "Temerloh"},
+    "Sungai Pahang Hilir": {"level": 2.9, "rainfall": 16.0, "district": "Pekan",              "station": "Pekan"},
+    # ── Negeri Sembilan ──
+    "Sungai Linggi":       {"level": 1.9, "rainfall":  8.0, "district": "Seremban",            "station": "Seremban"},
+    "Sungai Lukut":        {"level": 1.8, "rainfall":  7.5, "district": "Port Dickson",        "station": "Port Dickson"},
+    # ── Melaka ──
+    "Sungai Melaka":       {"level": 1.7, "rainfall":  7.0, "district": "Melaka Tengah",       "station": "Bandar Melaka"},
+    "Sungai Alor Gajah":   {"level": 1.9, "rainfall":  8.5, "district": "Alor Gajah",         "station": "Alor Gajah"},
+    # ── Kedah ──
+    "Sungai Kedah":        {"level": 2.1, "rainfall":  9.0, "district": "Alor Setar",          "station": "Alor Setar"},
+    "Sungai Muda":         {"level": 2.0, "rainfall":  8.5, "district": "Sungai Petani",       "station": "Sungai Petani"},
+    "Sungai Muda Hulu":    {"level": 2.4, "rainfall": 12.0, "district": "Baling",              "station": "Baling"},
+    # ── Pulau Pinang ──
+    "Sungai Pinang":       {"level": 1.8, "rainfall":  9.0, "district": "Georgetown",          "station": "Georgetown"},
+    "Sungai Juru":         {"level": 2.0, "rainfall":  8.5, "district": "Seberang Perai",      "station": "Seberang Perai"},
+    # ── Perlis ──
+    "Sungai Perlis":       {"level": 1.9, "rainfall":  8.0, "district": "Kangar",              "station": "Kangar"},
 }
 
 # ── Evacuation Centres (JKM / MERCY Malaysia) ─────────────────────────────────
@@ -179,6 +214,125 @@ EVACUATION_CENTERS = {
         {"name": "Sekolah Kebangsaan Dengkil",   "capacity": 300, "lat": 2.7389, "lng": 101.7089, "contact": "03-87681234"},
         {"name": "Dewan Serbaguna MDSEP Sepang", "capacity": 500, "lat": 2.7241, "lng": 101.7213, "contact": "03-87065678"},
     ],
+    # ── Johor ──
+    "Johor Bahru": [
+        {"name": "Stadium Larkin Johor Bahru",          "capacity": 2000, "lat": 1.5003, "lng": 103.7378, "contact": "07-2242244"},
+        {"name": "Sekolah Menengah Kebangsaan Skudai",  "capacity": 600,  "lat": 1.5291, "lng": 103.6762, "contact": "07-5577890"},
+        {"name": "Dewan Orang Ramai JB Selatan",        "capacity": 400,  "lat": 1.4812, "lng": 103.7542, "contact": "07-2241234"},
+    ],
+    "Kota Tinggi": [
+        {"name": "Stadium Kota Tinggi",                 "capacity": 800,  "lat": 1.7322, "lng": 103.9028, "contact": "07-8831234"},
+        {"name": "Sekolah Kebangsaan Kota Tinggi",      "capacity": 400,  "lat": 1.7289, "lng": 103.8978, "contact": "07-8835678"},
+    ],
+    "Batu Pahat": [
+        {"name": "Dewan Jubli Batu Pahat",              "capacity": 1000, "lat": 1.8547, "lng": 102.9346, "contact": "07-4321234"},
+        {"name": "Sekolah Menengah Kebangsaan Batu Pahat","capacity": 500,"lat": 1.8612, "lng": 102.9289, "contact": "07-4325678"},
+    ],
+    "Muar": [
+        {"name": "Stadium Muar",                        "capacity": 800,  "lat": 2.0444, "lng": 102.5689, "contact": "06-9521234"},
+        {"name": "Sekolah Kebangsaan Muar",             "capacity": 400,  "lat": 2.0389, "lng": 102.5734, "contact": "06-9525678"},
+    ],
+    # ── Perak ──
+    "Ipoh": [
+        {"name": "Stadium Perak Ipoh",                  "capacity": 2000, "lat": 4.5893, "lng": 101.0901, "contact": "05-2541234"},
+        {"name": "Sekolah Menengah Kebangsaan Anderson","capacity": 600,  "lat": 4.5934, "lng": 101.0845, "contact": "05-2545678"},
+        {"name": "Dewan Serbaguna MBI Ipoh",            "capacity": 400,  "lat": 4.5812, "lng": 101.0956, "contact": "05-2543344"},
+    ],
+    "Teluk Intan": [
+        {"name": "Stadium Teluk Intan",                 "capacity": 800,  "lat": 4.0229, "lng": 101.0227, "contact": "05-6221234"},
+        {"name": "Sekolah Kebangsaan Teluk Intan",      "capacity": 400,  "lat": 4.0189, "lng": 101.0278, "contact": "05-6225678"},
+    ],
+    "Taiping": [
+        {"name": "Dewan Orang Ramai Taiping",           "capacity": 600,  "lat": 4.8512, "lng": 100.7334, "contact": "05-8081234"},
+        {"name": "Sekolah Kebangsaan Taiping",          "capacity": 400,  "lat": 4.8456, "lng": 100.7389, "contact": "05-8085678"},
+    ],
+    # ── Kelantan ──
+    "Kota Bharu": [
+        {"name": "Stadium Sultan Muhammad IV",          "capacity": 2000, "lat": 6.1254, "lng": 102.2381, "contact": "09-7481234"},
+        {"name": "Sekolah Menengah Kebangsaan Kota Bharu","capacity": 600,"lat": 6.1189, "lng": 102.2312, "contact": "09-7485678"},
+        {"name": "Dewan Orang Ramai MPKB",              "capacity": 500,  "lat": 6.1312, "lng": 102.2445, "contact": "09-7483344"},
+    ],
+    "Pasir Mas": [
+        {"name": "Sekolah Kebangsaan Pasir Mas",        "capacity": 500,  "lat": 6.0489, "lng": 102.1378, "contact": "09-7901234"},
+        {"name": "Dewan Komuniti Pasir Mas",            "capacity": 300,  "lat": 6.0534, "lng": 102.1312, "contact": "09-7905678"},
+    ],
+    "Kuala Krai": [
+        {"name": "Sekolah Menengah Kebangsaan Kuala Krai","capacity": 600,"lat": 5.5289, "lng": 102.2012, "contact": "09-9661234"},
+        {"name": "Dewan Orang Ramai Kuala Krai",        "capacity": 400,  "lat": 5.5378, "lng": 102.1956, "contact": "09-9665678"},
+    ],
+    # ── Terengganu ──
+    "Kuala Terengganu": [
+        {"name": "Stadium Sultan Mizan Zainal Abidin",  "capacity": 2000, "lat": 5.3302, "lng": 103.1408, "contact": "09-6221234"},
+        {"name": "Dewan Komuniti Kuala Terengganu",     "capacity": 500,  "lat": 5.3245, "lng": 103.1356, "contact": "09-6225678"},
+    ],
+    "Kemaman": [
+        {"name": "Dewan Orang Ramai Kemaman",           "capacity": 500,  "lat": 4.2289, "lng": 103.4189, "contact": "09-8591234"},
+        {"name": "Sekolah Kebangsaan Kemaman",          "capacity": 300,  "lat": 4.2378, "lng": 103.4134, "contact": "09-8595678"},
+    ],
+    # ── Pahang ──
+    "Kuantan": [
+        {"name": "Stadium Teruntum Kuantan",            "capacity": 1500, "lat": 3.8077, "lng": 103.3260, "contact": "09-5151234"},
+        {"name": "Sekolah Menengah Kebangsaan Kuantan", "capacity": 600,  "lat": 3.8012, "lng": 103.3312, "contact": "09-5155678"},
+        {"name": "Dewan Serbaguna MPK",                 "capacity": 400,  "lat": 3.8145, "lng": 103.3189, "contact": "09-5153344"},
+    ],
+    "Temerloh": [
+        {"name": "Stadium Temerloh",                    "capacity": 800,  "lat": 3.4512, "lng": 102.4189, "contact": "09-2961234"},
+        {"name": "Sekolah Kebangsaan Temerloh",         "capacity": 400,  "lat": 3.4456, "lng": 102.4134, "contact": "09-2965678"},
+    ],
+    "Pekan": [
+        {"name": "Dewan Orang Ramai Pekan",             "capacity": 600,  "lat": 3.4883, "lng": 103.3887, "contact": "09-4221234"},
+        {"name": "Sekolah Kebangsaan Pekan",            "capacity": 400,  "lat": 3.4823, "lng": 103.3934, "contact": "09-4225678"},
+    ],
+    # ── Negeri Sembilan ──
+    "Seremban": [
+        {"name": "Stadium Tuanku Abdul Halim Seremban", "capacity": 1000, "lat": 2.7234, "lng": 101.9423, "contact": "06-7621234"},
+        {"name": "Sekolah Menengah Kebangsaan Seremban","capacity": 500,  "lat": 2.7312, "lng": 101.9345, "contact": "06-7625678"},
+        {"name": "Dewan Serbaguna MPPNS",               "capacity": 400,  "lat": 2.7189, "lng": 101.9456, "contact": "06-7623344"},
+    ],
+    "Port Dickson": [
+        {"name": "Dewan Orang Ramai Port Dickson",      "capacity": 500,  "lat": 2.5234, "lng": 101.7989, "contact": "06-6471234"},
+        {"name": "Sekolah Kebangsaan Port Dickson",     "capacity": 350,  "lat": 2.5189, "lng": 101.8034, "contact": "06-6475678"},
+    ],
+    # ── Melaka ──
+    "Melaka Tengah": [
+        {"name": "Stadium Hang Jebat Melaka",           "capacity": 1500, "lat": 2.1923, "lng": 102.2534, "contact": "06-2321234"},
+        {"name": "Sekolah Kebangsaan Melaka Tengah",    "capacity": 500,  "lat": 2.1989, "lng": 102.2489, "contact": "06-2325678"},
+        {"name": "Dewan Serbaguna MBMB",                "capacity": 400,  "lat": 2.1878, "lng": 102.2578, "contact": "06-2323344"},
+    ],
+    "Alor Gajah": [
+        {"name": "Dewan Orang Ramai Alor Gajah",        "capacity": 400,  "lat": 2.3789, "lng": 102.2089, "contact": "06-5561234"},
+        {"name": "Sekolah Kebangsaan Alor Gajah",       "capacity": 300,  "lat": 2.3845, "lng": 102.2034, "contact": "06-5565678"},
+    ],
+    # ── Kedah ──
+    "Alor Setar": [
+        {"name": "Stadium Darul Aman Alor Setar",       "capacity": 2000, "lat": 6.1212, "lng": 100.3712, "contact": "04-7311234"},
+        {"name": "Sekolah Menengah Kebangsaan Alor Setar","capacity": 600,"lat": 6.1156, "lng": 100.3656, "contact": "04-7315678"},
+        {"name": "Dewan Serbaguna MBAAS",               "capacity": 400,  "lat": 6.1267, "lng": 100.3767, "contact": "04-7313344"},
+    ],
+    "Sungai Petani": [
+        {"name": "Stadium Sungai Petani",               "capacity": 1000, "lat": 5.6512, "lng": 100.4912, "contact": "04-4211234"},
+        {"name": "Sekolah Menengah Kebangsaan Sungai Petani","capacity": 500,"lat": 5.6456,"lng": 100.4856,"contact": "04-4215678"},
+    ],
+    "Baling": [
+        {"name": "Dewan Orang Ramai Baling",            "capacity": 400,  "lat": 5.6834, "lng": 100.9145, "contact": "04-4701234"},
+        {"name": "Sekolah Kebangsaan Baling",           "capacity": 300,  "lat": 5.6789, "lng": 100.9189, "contact": "04-4705678"},
+    ],
+    # ── Pulau Pinang ──
+    "Georgetown": [
+        {"name": "Stadium Batu Kawan Pulau Pinang",     "capacity": 2000, "lat": 5.3989, "lng": 100.4256, "contact": "04-6411234"},
+        {"name": "Sekolah Menengah Kebangsaan Georgetown","capacity": 600,"lat": 5.4123,"lng": 100.3312,"contact": "04-2281234"},
+        {"name": "Dewan Serbaguna MBPP",                "capacity": 500,  "lat": 5.4089, "lng": 100.3267, "contact": "04-2285678"},
+    ],
+    "Seberang Perai": [
+        {"name": "Stadium Seberang Jaya",               "capacity": 1500, "lat": 5.3978, "lng": 100.4023, "contact": "04-3971234"},
+        {"name": "Sekolah Menengah Kebangsaan Seberang Perai","capacity": 500,"lat": 5.3923,"lng": 100.3967,"contact": "04-3975678"},
+        {"name": "Dewan Komuniti MPSP",                 "capacity": 400,  "lat": 5.4034, "lng": 100.4078, "contact": "04-3973344"},
+    ],
+    # ── Perlis ──
+    "Kangar": [
+        {"name": "Stadium Kangar Perlis",               "capacity": 800,  "lat": 6.4412, "lng": 100.1989, "contact": "04-9761234"},
+        {"name": "Sekolah Menengah Kebangsaan Kangar",  "capacity": 400,  "lat": 6.4367, "lng": 100.2034, "contact": "04-9765678"},
+    ],
 }
 
 # ── Flood Type Classification ─────────────────────────────────────────────────
@@ -189,10 +343,14 @@ EVACUATION_CENTERS = {
 # Rural/coastal districts: flooding is primarily caused by rivers exceeding their
 # banks after sustained upstream rainfall. River level is the primary indicator.
 URBAN_DISTRICTS = {
-    # All KL/Selangor urban districts — flash flood risk (drainage-driven)
+    # Selangor / KL — flash flood risk (drainage-driven)
     "Klang", "Gombak", "Kepong", "Cheras",
     "Ampang", "Petaling Jaya", "Bangsar",
     "Subang Jaya", "Shah Alam",
+    # Other peninsular states — urban centres
+    "Johor Bahru", "Ipoh", "Kota Bharu", "Kuala Terengganu",
+    "Kuantan", "Seremban", "Melaka Tengah",
+    "Alor Setar", "Sungai Petani", "Georgetown", "Seberang Perai", "Kangar",
 }
 
 # Flash flood rainfall thresholds — calibrated for KL/Selangor urban drainage reality.
@@ -222,7 +380,58 @@ DISTRICT_COORDS = {
     # River overflow zones — Selangor
     "Kuala Selangor": (3.3474, 101.2442),
     "Sepang":         (2.7305, 101.7164),
+    # ── Johor ──
+    "Johor Bahru":    (1.4927, 103.7414),
+    "Kota Tinggi":    (1.7337, 103.9017),
+    "Batu Pahat":     (1.8547, 102.9346),
+    "Muar":           (2.0444, 102.5689),
+    # ── Perak ──
+    "Ipoh":           (4.5975, 101.0901),
+    "Teluk Intan":    (4.0229, 101.0227),
+    "Taiping":        (4.8500, 100.7333),
+    # ── Kelantan ──
+    "Kota Bharu":     (6.1254, 102.2381),
+    "Pasir Mas":      (6.0500, 102.1333),
+    "Kuala Krai":     (5.5333, 102.2000),
+    # ── Terengganu ──
+    "Kuala Terengganu": (5.3302, 103.1408),
+    "Kemaman":        (4.2333, 103.4167),
+    # ── Pahang ──
+    "Kuantan":        (3.8077, 103.3260),
+    "Temerloh":       (3.4500, 102.4167),
+    "Pekan":          (3.4883, 103.3887),
+    # ── Negeri Sembilan ──
+    "Seremban":       (2.7297, 101.9381),
+    "Port Dickson":   (2.5234, 101.7966),
+    # ── Melaka ──
+    "Melaka Tengah":  (2.1972, 102.2501),
+    "Alor Gajah":     (2.3799, 102.2061),
+    # ── Kedah ──
+    "Alor Setar":     (6.1184, 100.3686),
+    "Sungai Petani":  (5.6479, 100.4883),
+    "Baling":         (5.6833, 100.9167),
+    # ── Pulau Pinang ──
+    "Georgetown":     (5.4141, 100.3288),
+    "Seberang Perai": (5.3971, 100.3985),
+    # ── Perlis ──
+    "Kangar":         (6.4414, 100.1986),
 }
+
+
+STATE_DISTRICTS: dict = {
+    "Selangor":        ["Klang","Gombak","Kepong","Cheras","Ampang","Petaling Jaya","Bangsar","Subang Jaya","Shah Alam","Kuala Selangor","Sepang"],
+    "Johor":           ["Johor Bahru","Kota Tinggi","Batu Pahat","Muar"],
+    "Perak":           ["Ipoh","Teluk Intan","Taiping"],
+    "Kelantan":        ["Kota Bharu","Pasir Mas","Kuala Krai"],
+    "Terengganu":      ["Kuala Terengganu","Kemaman"],
+    "Pahang":          ["Kuantan","Temerloh","Pekan"],
+    "Negeri Sembilan": ["Seremban","Port Dickson"],
+    "Melaka":          ["Melaka Tengah","Alor Gajah"],
+    "Kedah":           ["Alor Setar","Sungai Petani","Baling"],
+    "Pulau Pinang":    ["Georgetown","Seberang Perai"],
+    "Perlis":          ["Kangar"],
+}
+DISTRICT_TO_STATE: dict = {d: s for s, ds in STATE_DISTRICTS.items() for d in ds}
 
 
 def _compute_station_status(
@@ -695,6 +904,41 @@ _DISTRICT_CLIM_DISCHARGE: dict = {
     "Shah Alam":      25.0,
     "Kuala Selangor": 45.0,
     "Sepang":         35.0,
+    # Johor
+    "Johor Bahru":    15.0,
+    "Kota Tinggi":    120.0,
+    "Batu Pahat":     85.0,
+    "Muar":           100.0,
+    # Perak
+    "Ipoh":           45.0,
+    "Teluk Intan":    250.0,
+    "Taiping":        40.0,
+    # Kelantan
+    "Kota Bharu":     300.0,
+    "Pasir Mas":      250.0,
+    "Kuala Krai":     180.0,
+    # Terengganu
+    "Kuala Terengganu": 150.0,
+    "Kemaman":        90.0,
+    # Pahang
+    "Kuantan":        60.0,
+    "Temerloh":       350.0,
+    "Pekan":          400.0,
+    # Negeri Sembilan
+    "Seremban":       30.0,
+    "Port Dickson":   20.0,
+    # Melaka
+    "Melaka Tengah":  25.0,
+    "Alor Gajah":     30.0,
+    # Kedah
+    "Alor Setar":     55.0,
+    "Sungai Petani":  80.0,
+    "Baling":         60.0,
+    # Pulau Pinang
+    "Georgetown":     12.0,
+    "Seberang Perai": 35.0,
+    # Perlis
+    "Kangar":         25.0,
 }
 
 
@@ -1014,15 +1258,21 @@ def _persist_alert(alert: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _send_push_notifications(risk: str, affected: list, action: str) -> None:
-    """Send Expo push notifications to all registered citizen devices."""
+    """Send Expo push notifications — only to devices registered for affected states."""
     if not _push_tokens or risk not in ("WARNING", "DANGER"):
         return
+    affected_states = {DISTRICT_TO_STATE.get(d, "") for d in affected}
     icon  = "🚨" if risk == "DANGER" else "⚠️"
     areas = ", ".join(affected[:3]) + (" + more" if len(affected) > 3 else "")
-    msgs  = [{"to": t, "title": f"{icon} FloodSense {risk} — {areas}",
+    # _push_tokens may contain plain strings (legacy) or dicts {token, state}
+    def _token_str(t): return t["token"] if isinstance(t, dict) else t
+    def _token_state(t): return t.get("state", "") if isinstance(t, dict) else ""
+    eligible = [t for t in _push_tokens
+                if not _token_state(t) or _token_state(t) in affected_states]
+    msgs  = [{"to": _token_str(t), "title": f"{icon} FloodSense {risk} — {areas}",
                "body": action, "sound": "default", "priority": "high",
                "data": {"risk_level": risk, "districts": affected}}
-             for t in _push_tokens]
+             for t in eligible]
     try:
         for i in range(0, len(msgs), 100):
             requests.post("https://exp.host/--/api/v2/push/send",
@@ -1341,6 +1591,7 @@ def get_flood_levels():
             "river":           river,
             "district":        data.get("district", "Unknown"),
             "station":         data.get("station", ""),
+            "state":           DISTRICT_TO_STATE.get(data.get("district", ""), "Selangor"),
             "condition":       data.get("condition", ""),
             "forecast_1h":     forecast_1h,
             "forecast_2h":     forecast_2h,
@@ -1743,13 +1994,17 @@ def get_rescue_cases():
 @app.route("/api/push/register", methods=["POST"])
 @limiter.limit("20 per hour")
 def register_push_token():
-    """POST /api/push/register — Store an Expo push token from the citizen app."""
-    token = (request.json or {}).get("token", "").strip()
+    """POST /api/push/register — Store an Expo push token with optional state for filtered alerts."""
+    body  = request.json or {}
+    token = body.get("token", "").strip()
+    state = body.get("state", "").strip()
     if not token:
         return jsonify({"error": "token required"}), 400
-    if token not in _push_tokens:
-        _push_tokens.append(token)
-        logger.info(f"[Push] Registered token — total: {len(_push_tokens)}")
+    entry    = {"token": token, "state": state} if state else token
+    existing = [t["token"] if isinstance(t, dict) else t for t in _push_tokens]
+    if token not in existing:
+        _push_tokens.append(entry)
+        logger.info(f"[Push] Registered token (state={state or 'any'}) — total: {len(_push_tokens)}")
     return jsonify({"success": True, "registered": len(_push_tokens)})
 
 
