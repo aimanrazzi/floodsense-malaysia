@@ -95,34 +95,38 @@ export default function AlertDetailScreen({ route, navigation }) {
     try {
       const district = r?.district;
       const reading  = district ? {
-        level:          r.river_level   ?? r.level   ?? 0,
-        rainfall:       r.rainfall_rate ?? r.rainfall ?? 0,
-        district:       district,
-        forecast_1h:    r.forecast_1h    ?? 0,
-        forecast_2h:    r.forecast_2h    ?? 0,
+        level:           r.river_level    ?? r.level    ?? 0,
+        rainfall:        r.rainfall_rate  ?? r.rainfall ?? 0,
+        district:        district,
+        forecast_1h:     r.forecast_1h    ?? 0,
+        forecast_2h:     r.forecast_2h    ?? 0,
         rain_chance_max: r.rain_chance_max ?? 0,
-        trend:          r.trend          ?? "stable",
-        flood_type:     r.flood_type     ?? "river_overflow",
+        trend:           r.trend          ?? "stable",
+        flood_type:      r.flood_type     ?? "river_overflow",
       } : null;
 
-      let data;
       if (district && reading) {
-        // District-specific analysis — focused on this one district
-        data = await floodApi.analyzeDistrict(district, reading);
-        setAssessment({
-          ...data.assessment,
-          anomaly_score: null,
-          timestamp: new Date().toISOString(),
-        });
-      } else {
-        // Fallback: full peninsula analysis if no district context
-        data = await floodApi.analyze(null);
-        setAssessment({
-          ...data.assessment,
-          anomaly_score: data.anomaly_score,
-          timestamp: new Date().toISOString(),
-        });
+        try {
+          // Try district-specific analysis first
+          const data = await floodApi.analyzeDistrict(district, reading);
+          setAssessment({
+            ...data.assessment,
+            anomaly_score: null,
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        } catch {
+          // Fall through to full-peninsula analysis below
+        }
       }
+
+      // Full-peninsula fallback (also used when no district context)
+      const data = await floodApi.analyze(null);
+      setAssessment({
+        ...data.assessment,
+        anomaly_score: data.anomaly_score,
+        timestamp: new Date().toISOString(),
+      });
     } catch {
       setError("Could not get AI assessment. Check your connection.");
     } finally {
@@ -295,6 +299,19 @@ export default function AlertDetailScreen({ route, navigation }) {
                         <Text style={[styles.factorBadgeText, { color: ds.color }]}>{ds.label}</Text>
                       </View>
                     </View>
+                    {primaryLevel > 0 && (
+                      <View style={styles.factorRow}>
+                        <Text style={styles.factorLabel}>River Backup</Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={styles.factorValue}>{primaryLevel.toFixed(1)} m</Text>
+                          {primaryLevel >= 4.5 && (
+                            <View style={[styles.factorBadge, { backgroundColor: rp.color + "28", borderColor: rp.color }]}>
+                              <Text style={[styles.factorBadgeText, { color: rp.color }]}>{rp.label}</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
                     <View style={styles.factorRow}>
                       <Text style={styles.factorLabel}>Area Profile</Text>
                       <Text style={styles.factorValue}>High-density urban</Text>
