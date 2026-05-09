@@ -111,7 +111,7 @@ export default function AlertDetailScreen({ route, navigation }) {
           const data = await floodApi.analyzeDistrict(district, reading);
           setAssessment({
             ...data.assessment,
-            anomaly_score: null,
+            anomaly_score: data.anomaly_score ?? null,
             timestamp: new Date().toISOString(),
           });
           return;
@@ -214,30 +214,50 @@ export default function AlertDetailScreen({ route, navigation }) {
           {!loading && assessment && (
             <>
               {/* Key metrics row */}
-              <View style={styles.metricsRow}>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricValue}>
-                    {Math.round((assessment.confidence || 0) * 100)}%
-                  </Text>
-                  <Text style={styles.metricLabel}>Confidence</Text>
-                </View>
-                <View style={styles.metricDivider} />
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricValue}>
-                    {assessment.anomaly_score != null
-                      ? assessment.anomaly_score.toFixed(2)
-                      : "--"}
-                  </Text>
-                  <Text style={styles.metricLabel}>Anomaly Score</Text>
-                </View>
-                <View style={styles.metricDivider} />
-                <View style={styles.metricBox}>
-                  <Text style={[styles.metricValue, { fontSize: 13 }]}>
-                    {assessment.estimated_time_to_critical || "N/A"}
-                  </Text>
-                  <Text style={styles.metricLabel}>Time to Critical</Text>
-                </View>
-              </View>
+              {(() => {
+                const score = assessment.anomaly_score;
+                const anomalyLabel = score == null ? null
+                  : score >= 0.8 ? { text: "Extreme",  color: "#EF4444" }
+                  : score >= 0.6 ? { text: "Unusual",  color: "#F59E0B" }
+                  : score >= 0.35 ? { text: "Elevated", color: "#EAB308" }
+                  :                 { text: "Normal",   color: "#22C55E" };
+                return (
+                  <View style={styles.metricsRow}>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.metricValue}>
+                        {Math.round((assessment.confidence || 0) * 100)}%
+                      </Text>
+                      <Text style={styles.metricLabel}>AI Confidence</Text>
+                    </View>
+                    <View style={styles.metricDivider} />
+                    <View style={styles.metricBox}>
+                      {anomalyLabel ? (
+                        <>
+                          <Text style={[styles.metricValue, { color: anomalyLabel.color, fontSize: 14 }]}>
+                            {anomalyLabel.text}
+                          </Text>
+                          <Text style={styles.metricLabel}>Sensor Pattern</Text>
+                          <Text style={[styles.metricSub, { color: anomalyLabel.color }]}>
+                            {score != null ? score.toFixed(2) : ""}
+                          </Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.metricValue}>--</Text>
+                          <Text style={styles.metricLabel}>Sensor Pattern</Text>
+                        </>
+                      )}
+                    </View>
+                    <View style={styles.metricDivider} />
+                    <View style={styles.metricBox}>
+                      <Text style={[styles.metricValue, { fontSize: 13 }]}>
+                        {assessment.estimated_time_to_critical || "N/A"}
+                      </Text>
+                      <Text style={styles.metricLabel}>Time to Critical</Text>
+                    </View>
+                  </View>
+                );
+              })()}
 
               {/* Recommended action */}
               {assessment.recommended_action && (
@@ -397,20 +417,22 @@ export default function AlertDetailScreen({ route, navigation }) {
                 </TouchableOpacity>
               )}
 
-              {/* False positive report */}
-              {reportSent ? (
-                <View style={styles.reportSentBox}>
-                  <Text style={styles.reportSentText}>
-                    Report received — thank you. Your feedback helps improve prediction accuracy.
-                  </Text>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.reportBtn}
-                  onPress={() => setReportVisible(true)}
-                >
-                  <Text style={styles.reportBtnText}>Report incorrect prediction</Text>
-                </TouchableOpacity>
+              {/* False positive report — only shown for WARNING / DANGER */}
+              {canEvacuate && (
+                reportSent ? (
+                  <View style={styles.reportSentBox}>
+                    <Text style={styles.reportSentText}>
+                      Report received — thank you. Your feedback helps improve prediction accuracy.
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.reportBtn}
+                    onPress={() => setReportVisible(true)}
+                  >
+                    <Text style={styles.reportBtnText}>Report incorrect prediction</Text>
+                  </TouchableOpacity>
+                )
               )}
             </>
           )}
@@ -508,6 +530,7 @@ const styles = StyleSheet.create({
   metricBox: { flex: 1, alignItems: "center" },
   metricValue: { fontSize: 20, fontWeight: "800", color: FS.text },
   metricLabel: { fontSize: 12, color: "#A8CCE0", marginTop: 4, textAlign: "center" },
+  metricSub:   { fontSize: 10, color: FS.subtext, marginTop: 2, textAlign: "center" },
   metricDivider: { width: 1, backgroundColor: FS.border, marginVertical: 4 },
 
   section: {

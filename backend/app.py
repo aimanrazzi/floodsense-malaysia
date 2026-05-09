@@ -781,8 +781,12 @@ def _load_rainfall_file_cache() -> dict:
             cached = json.loads(_RAINFALL_CACHE_FILE.read_text())
             if time.time() - cached.get("ts", 0) < _RAINFALL_TTL:
                 data = cached.get("data", {})
-                # Reject all-zero cache — it was written during an auth failure
-                if data and any(v > 0 for v in data.values()):
+                # Reject all-zero cache — it was written during an auth failure.
+                # data values are dicts {precip, condition, ...} so check precip key.
+                if data and any(
+                    (v.get("precip", 0) if isinstance(v, dict) else v) > 0
+                    for v in data.values()
+                ):
                     age = int(time.time() - cached["ts"])
                     logger.info(f"[WeatherAPI] Restored cache from disk ({age}s old)")
                     return cached
@@ -1672,8 +1676,20 @@ def analyze_district():
     if not reading:
         return jsonify({"error": f"No reading available for {district}"}), 400
 
+    now = _now()
+    anomaly_score, _ = compute_anomaly_score(
+        reading.get("level", 0),
+        reading.get("rainfall", 0),
+        now.hour,
+        now.month,
+    )
+
     assessment = _classify_risk_district(district, reading)
-    return jsonify({"success": True, "assessment": assessment})
+    return jsonify({
+        "success":      True,
+        "anomaly_score": round(anomaly_score, 3),
+        "assessment":   assessment,
+    })
 
 
 def _classify_risk_district(district: str, reading: dict) -> dict:
@@ -2395,6 +2411,70 @@ def health():
         "model_loaded": _ml_model is not None,
         "alerts_cached": len(_active_alerts),
         "last_cycle": _active_alerts[0]["timestamp"] if _active_alerts else None,
+    })
+
+
+@app.route("/api/debug/sources", methods=["GET"])
+def debug_sources():
+    """
+    GET /api/debug/sources
+    Shows live status of all three data sources: WeatherAPI, GloFAS, JPS WL.
+    Useful for verifying data pulls without reading server logs.
+    """
+    now = time.time()
+
+    # WeatherAPI cache status
+    wapi_age  = int(now - _RAINFALL_CACHE["ts"]) if _RAINFALL_CACHE["ts"] else None
+    wapi_data = _RAINFALL_CACHE.get("data", {})
+    raining   = {d: round(v.get("precip", 0), 2) for d, v in wapi_data.items() if v.get("precip", 0) > 0}
+    wapi_sample = {d: {
+        "precip_mm":    round(v.get("precip", 0), 2),
+        "forecast_1h":  round(v.get("forecast_1h", 0), 2),
+        "forecast_2h":  round(v.get("forecast_2h", 0), 2),
+        "rain_chance":  v.get("rain_chance_max", 0),
+        "condition":    v.get("condition", ""),
+    } for d, v in list(wapi_data.items())[:5]}  # first 5 districts as sample
+
+    # GloFAS cache status
+    glofas_age  = int(now - _GLOFAS_CACHE["ts"]) if _GLOFAS_CACHE["ts"] else None
+    glofas_data = _GLOFAS_CACHE.get("data", {})
+    glofas_sample = {d: {
+        "discharge_m3s": round(v.get("discharge") or 0, 1),
+        "baseline_m3s":  v.get("mean_30y", 0),
+        "ratio":         round((v.get("discharge") or 0) / v.get("mean_30y", 1), 2),
+    } for d, v in list(glofas_data.items())[:5]}
+
+    # Latest readings summary
+    readings_count = len(_latest_readings)
+    readings_sample = {k: {
+        "district": v.get("district"),
+        "level_m":  round(v.get("level", 0), 2),
+        "rain_mmhr": round(v.get("rainfall", 0), 2),
+        "level_source": v.get("level_source", "static"),
+        "live_rainfall": v.get("live_rainfall", False),
+    } for k, v in list(_latest_readings.items())[:5]}
+
+    return jsonify({
+        "weatherapi": {
+            "key_set":       bool(_WEATHERAPI_KEY),
+            "cache_age_s":   wapi_age,
+            "ttl_s":         _RAINFALL_TTL,
+            "stale":         wapi_age is None or wapi_age > _RAINFALL_TTL,
+            "districts_cached": len(wapi_data),
+            "currently_raining": raining,
+            "sample":        wapi_sample,
+        },
+        "glofas": {
+            "cache_age_s":   glofas_age,
+            "ttl_s":         _GLOFAS_TTL,
+            "stale":         glofas_age is None or glofas_age > _GLOFAS_TTL,
+            "districts_cached": len(glofas_data),
+            "sample":        glofas_sample,
+        },
+        "readings": {
+            "total":  readings_count,
+            "sample": readings_sample,
+        },
     })
 
 
