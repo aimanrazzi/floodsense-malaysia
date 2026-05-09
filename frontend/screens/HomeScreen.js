@@ -390,7 +390,10 @@ export default function FloodMapScreen({ navigation }) {
               <View style={styles.metricDivider} />
               <View style={styles.metric}>
                 <Text style={styles.metricIcon}>🌊</Text>
-                <Text style={styles.metricValue}>{item.river_level.toFixed(1)}m</Text>
+                <Text style={styles.metricValue}>
+                  {item.river_level.toFixed(1)}m
+                  {item.level_source === "glofas" ? <Text style={{ fontSize: 9, color: "#64748b" }}> est.</Text> : null}
+                </Text>
                 <Text style={styles.metricLabel}>{tf.riverLevel}</Text>
               </View>
             </>
@@ -398,7 +401,10 @@ export default function FloodMapScreen({ navigation }) {
             <>
               <View style={styles.metric}>
                 <Text style={styles.metricIcon}>🌊</Text>
-                <Text style={styles.metricValue}>{item.river_level.toFixed(1)}m</Text>
+                <Text style={styles.metricValue}>
+                  {item.river_level.toFixed(1)}m
+                  {item.level_source === "glofas" ? <Text style={{ fontSize: 9, color: "#64748b" }}> est.</Text> : null}
+                </Text>
                 <Text style={styles.metricLabel}>{tf.riverLevel}</Text>
               </View>
               <View style={styles.metricDivider} />

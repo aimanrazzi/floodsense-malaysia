@@ -911,15 +911,17 @@ _GLOFAS_TTL   = 1800  # 30-min cache — GloFAS updates every 6h, no point refre
 # river_discharge_mean_30y was removed from Open-Meteo GloFAS API; static baselines
 # are equivalent and more stable for a fixed geography.
 _DISTRICT_CLIM_DISCHARGE: dict = {
-    "Klang":          60.0,
-    "Gombak":         25.0,
-    "Kepong":         20.0,
-    "Cheras":         18.0,
-    "Ampang":         22.0,
-    "Petaling Jaya":  15.0,
-    "Bangsar":        12.0,
-    "Subang Jaya":    18.0,
-    "Shah Alam":      25.0,
+    # Selangor — GloFAS at 5km resolution captures Sungai Klang network, not small tributaries.
+    # Baselines reflect Sungai Klang discharge at each coordinate, NOT the local sub-river.
+    "Klang":          90.0,   # Sungai Klang at tidal reach — large river
+    "Gombak":         55.0,   # Sungai Gombak confluence with Klang
+    "Kepong":         50.0,   # Sungai Batu / upper Klang
+    "Cheras":         45.0,   # Sungai Klang tributary (Sg Cheras)
+    "Ampang":         40.0,   # Sungai Klang tributary (Sg Ampang)
+    "Petaling Jaya":  50.0,   # Sungai Damansara / Klang midstream
+    "Bangsar":        45.0,   # Sungai Klang upstream of city
+    "Subang Jaya":    60.0,   # GloFAS cell covers Sungai Klang, not Sungai Subang
+    "Shah Alam":      70.0,   # Sungai Klang main channel
     "Kuala Selangor": 45.0,
     "Sepang":         35.0,
     # Johor
@@ -1642,6 +1644,7 @@ def get_flood_levels():
             "status":          status,
             "color":           color,
             "flood_type":      flood_type,
+            "level_source":    data.get("level_source", "static"),
             "last_updated":    _now().isoformat(),
         })
 
@@ -1675,39 +1678,55 @@ def analyze_district():
 
 def _classify_risk_district(district: str, reading: dict) -> dict:
     """Claude analysis scoped to a single district."""
+    # Always pre-compute the authoritative status from the rule engine.
+    # Claude generates the explanation; it must NOT override the computed status.
+    level       = reading.get("level", 0.0)
+    rainfall    = reading.get("rainfall", 0.0)
+    forecast_2h = reading.get("forecast_2h", 0.0)
+    rain_chance = reading.get("rain_chance_max", 0)
+    computed_status = _compute_station_status(level, rainfall, district, forecast_2h, rain_chance)
+
     if not _anthropic_client:
         return _rule_based_fallback({district: reading})
 
     is_flash   = district in URBAN_DISTRICTS
+    state      = DISTRICT_TO_STATE.get(district, "Malaysia")
     flood_type = "flash flood (Banjir Kilat)" if is_flash else "river overflow (Banjir Sungai)"
-    thresholds = (
-        "Watch ≥15mm/hr, Warning ≥30mm/hr, Danger ≥50mm/hr"
-        if is_flash else
-        "Watch ≥3.0m, Warning ≥4.5m, Danger ≥5.5m"
-    )
-    state = DISTRICT_TO_STATE.get(district, "Malaysia")
 
-    prompt = f"""You are a flood risk agent evaluating {district}, {state}.
+    # Explain the hybrid trigger for urban districts so Claude understands
+    # why a river-level reading can cause a flash-flood district to be WARNING/DANGER.
+    trigger_note = ""
+    if is_flash and level >= 3.0:
+        trigger_note = (
+            f"\nNote: {district} is a flash flood district but its river is also elevated at {level:.1f}m. "
+            f"River backup ≥4.5m raises status to WARNING; ≥5.5m raises to DANGER even with low rainfall."
+        )
+
+    prompt = f"""You are a flood risk agent writing a plain-English explanation for {district}, {state}.
 
 Flood type: {flood_type}
-Thresholds: {thresholds}
+Primary thresholds: {"rainfall — Watch ≥15mm/hr, Warning ≥30mm/hr, Danger ≥50mm/hr" if is_flash else "river level — Watch ≥3.0m, Warning ≥4.5m, Danger ≥5.5m"}{trigger_note}
 
 Current reading:
 {json.dumps(reading, indent=2)}
 
-Assess THIS district only. Cover:
-1. What the current readings mean (safe, elevated, or critical?)
-2. Whether the 1–2 hour forecast changes the outlook
+The sensor system has already computed the risk status as: {computed_status}
+
+Your job is to explain THIS status to residents in 2–3 clear sentences. Cover:
+1. Which reading(s) drove the {computed_status} status and why
+2. What the 1–2 hour forecast means for the outlook
 3. What residents in {district} should do right now
+
+You MUST use "{computed_status}" as risk_level. Do not change it.
 
 Respond ONLY in this exact JSON:
 {{
-  "risk_level": "SAFE|WATCH|WARNING|DANGER",
+  "risk_level": "{computed_status}",
   "affected_districts": ["{district}"],
   "estimated_time_to_critical": "X hours or N/A",
-  "confidence": 0.0-1.0,
+  "confidence": 0.85,
   "recommended_action": "one clear action sentence for {district} residents",
-  "reasoning": "2–3 clear sentences about {district}: current conditions, short-term outlook, and what to watch for."
+  "reasoning": "2–3 clear sentences explaining the {computed_status} status for {district}."
 }}"""
 
     try:
@@ -1720,7 +1739,9 @@ Respond ONLY in this exact JSON:
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
             result = json.loads(match.group(0))
-            result["source"] = "claude"
+            # Enforce the pre-computed status — Claude must not override it
+            result["risk_level"] = computed_status
+            result["source"]     = "claude"
             return result
     except Exception as e:
         logger.error(f"[Claude district] {e}")
