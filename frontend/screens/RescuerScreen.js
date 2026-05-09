@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Linking, Alert,
+  ActivityIndicator, RefreshControl, Linking, Alert, TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -467,4 +467,16 @@ const styles = StyleSheet.create({
 
   lockedNotice: { gap: 8 },
   lockedText:   { fontSize: 12, color: "#6ee7b7", textAlign: "center", marginBottom: 4 },
+
+  profileBox: {
+    backgroundColor: FS.card, borderRadius: 16, padding: 16, marginBottom: 16,
+    borderWidth: 1, borderColor: FS.border,
+  },
+  profileTitle: { fontSize: 14, fontWeight: "900", color: FS.text, marginBottom: 4 },
+  profileSub:   { fontSize: 12, color: FS.subtext, marginBottom: 12, lineHeight: 17 },
+  profileRow:   { flexDirection: "row", gap: 8 },
+  profileInput: {
+    backgroundColor: FS.surface, borderRadius: 10, borderWidth: 1, borderColor: FS.border,
+    paddingHorizontal: 12, paddingVertical: 10, color: FS.text, fontSize: 13,
+  },
 });

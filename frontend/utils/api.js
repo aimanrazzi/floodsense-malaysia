@@ -30,6 +30,10 @@ export const floodApi = {
   /** Run ML + Claude on provided readings (or latest cached ones if omitted). */
   analyze: (readings) => post("/api/flood/analyze", readings ? { readings } : {}),
 
+  /** Run a Claude analysis scoped to one specific district. */
+  analyzeDistrict: (district, reading) =>
+    post("/api/flood/analyze/district", { district, reading }),
+
   /** Last 20 alert events from Firestore (or in-memory fallback). */
   getAlerts: () => get("/api/flood/alerts"),
 

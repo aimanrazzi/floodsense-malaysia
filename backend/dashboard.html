@@ -736,15 +736,48 @@ function renderStateFocus(state, districts, d) {
     ? `${state}: ${affected.length} district${affected.length>1?'s':''} flagged — worst is ${worstStatus}.`
     : `${state}: All ${stateDistricts.length} district${stateDistricts.length>1?'s':''} currently safe.`;
 
+  // Returns the key metric string for a district: rainfall or river level
+  function districtMetric(x) {
+    const isFlash = x.flood_type === 'flash_flood';
+    const trend   = x.trend === 'rising' ? ' ↑' : x.trend === 'easing' ? ' ↓' : '';
+    if (isFlash) {
+      const rain = (x.rainfall || 0).toFixed(1);
+      const fcst = (x.forecast_2h || 0).toFixed(1);
+      return fcst > 0
+        ? `${rain}mm/hr now · ${fcst}mm forecast${trend}`
+        : `${rain}mm/hr rainfall${trend}`;
+    } else {
+      const lvl = (x.river_level || 0).toFixed(1);
+      return `river ${lvl}m${trend}`;
+    }
+  }
+
+  // Plain-English explanation per status level
+  const STATUS_EXPLAIN = {
+    DANGER:  { label:'🔴 DANGER',  color:'#fca5a5', note:'Active flooding — evacuate immediately and avoid flood-prone roads.' },
+    WARNING: { label:'🟠 WARNING', color:'#fcd34d', note:'Flooding likely — take precautions and prepare to evacuate if instructed.' },
+    WATCH:   { label:'🟡 WATCH',   color:'#fde68a', note:'Conditions are elevated but below critical threshold — stay informed and monitor updates.' },
+  };
+
+  // Build one row per flagged status group: label + per-district metrics + explanation
+  function statusBlock(group, key) {
+    if (!group.length) return '';
+    const { label, color, note } = STATUS_EXPLAIN[key];
+    const districtTags = group.map(x =>
+      `<span style="color:#f1f5f9;font-weight:700">${x.district}</span>` +
+      `<span style="color:#64748b;font-size:11px"> (${districtMetric(x)})</span>`
+    ).join('<span style="color:#334155"> · </span>');
+    return `
+      <div class="rounded-lg p-2.5 mb-2" style="background:rgba(255,255,255,0.03);border:1px solid #1e3a5f">
+        <div class="text-xs font-bold mb-1" style="color:${color}">${label}</div>
+        <div class="text-xs mb-1.5 leading-relaxed">${districtTags}</div>
+        <div class="text-xs leading-relaxed" style="color:#64748b">${note}</div>
+      </div>`;
+  }
+
   const bullets = [];
-  if (byStatus.DANGER.length)
-    bullets.push(`🔴 DANGER — ${byStatus.DANGER.map(x=>`<strong>${x.district}</strong>`).join(', ')}`);
-  if (byStatus.WARNING.length)
-    bullets.push(`🟠 WARNING — ${byStatus.WARNING.map(x=>`<strong>${x.district}</strong>`).join(', ')}`);
-  if (byStatus.WATCH.length)
-    bullets.push(`🟡 WATCH — ${byStatus.WATCH.map(x=>x.district).join(', ')}`);
   if (byStatus.SAFE.length)
-    bullets.push(`🟢 ${byStatus.SAFE.length} district${byStatus.SAFE.length>1?'s':''} clear`);
+    bullets.push(`🟢 ${byStatus.SAFE.length} district${byStatus.SAFE.length>1?'s':''} clear — no action required.`);
 
   // Include WATCH in other-states reminder (not just WARNING/DANGER)
   const otherAtRisk = {};
@@ -792,15 +825,16 @@ function renderStateFocus(state, districts, d) {
   }
 
   el.innerHTML = `
-    <p class="text-sm font-semibold leading-snug mb-2" style="color:${riskColor}">${headline}</p>
-    <div class="space-y-1">
-      ${bullets.map(b => `
-        <div class="flex items-start gap-2">
-          <span style="color:#475569;margin-top:2px;flex-shrink:0;user-select:none">·</span>
-          <span style="font-size:12px;color:#94a3b8;line-height:1.5">${b}</span>
-        </div>`).join('')}
-      ${otherLine}
-    </div>
+    <p class="text-sm font-semibold leading-snug mb-3" style="color:${riskColor}">${headline}</p>
+    ${statusBlock(byStatus.DANGER,  'DANGER')}
+    ${statusBlock(byStatus.WARNING, 'WARNING')}
+    ${statusBlock(byStatus.WATCH,   'WATCH')}
+    ${bullets.length ? `
+    <div class="flex items-start gap-2 mb-1">
+      <span style="color:#475569;margin-top:2px;flex-shrink:0">·</span>
+      <span style="font-size:12px;color:#4ade80;line-height:1.5">${bullets[0]}</span>
+    </div>` : ''}
+    ${otherLine}
     ${globalSection}`;
 
   // Update recommended action from the global assessment
@@ -811,30 +845,115 @@ function renderStateFocus(state, districts, d) {
   else { actionBlock.classList.add('hidden'); }
 }
 
+// Builds the all-states summary for the global (no state filter) dashboard view.
+// Shows each state's worst district + metric + status, then appends Claude reasoning.
+function renderGlobalFocus(districts, d) {
+  const el = document.getElementById('aiReasoningBullets');
+  if (!districts.length) {
+    el.innerHTML = '<p class="text-xs text-slate-600">Waiting for district data…</p>';
+    return;
+  }
+
+  const SO = { DANGER:3, WARNING:2, WATCH:1, SAFE:0 };
+
+  // Group districts by state, find worst status per state
+  const stateMap = {};
+  districts.forEach(x => {
+    const s = x.state || 'Unknown';
+    if (!stateMap[s]) stateMap[s] = { worst: 'SAFE', districts: [] };
+    stateMap[s].districts.push(x);
+    if ((SO[x.status]||0) > (SO[stateMap[s].worst]||0)) stateMap[s].worst = x.status;
+  });
+
+  const sortedStates = Object.entries(stateMap).sort((a, b) => (SO[b[1].worst]||0) - (SO[a[1].worst]||0));
+  const atRiskStates = sortedStates.filter(([,v]) => v.worst !== 'SAFE');
+  const safeStates   = sortedStates.filter(([,v]) => v.worst === 'SAFE');
+
+  const overallWorst = sortedStates[0]?.[1]?.worst || 'SAFE';
+  const riskColor    = RISK_COLOR[overallWorst] || '#4ade80';
+
+  const headline = atRiskStates.length
+    ? `${atRiskStates.length} state${atRiskStates.length>1?'s':''} flagged — ${safeStates.length} clear.`
+    : `All ${sortedStates.length} states currently safe.`;
+
+  function districtMetricGlobal(x) {
+    const isFlash = x.flood_type === 'flash_flood';
+    const trend   = x.trend === 'rising' ? ' ↑' : x.trend === 'easing' ? ' ↓' : '';
+    if (isFlash) {
+      const rain = (x.rainfall || 0).toFixed(1);
+      const fcst = (x.forecast_2h || 0).toFixed(1);
+      return fcst > 0 ? `${rain}mm/hr · ${fcst}mm fcst${trend}` : `${rain}mm/hr${trend}`;
+    } else {
+      return `river ${(x.river_level || 0).toFixed(1)}m${trend}`;
+    }
+  }
+
+  // Per-state row: state name + worst status chip + list of flagged districts
+  function stateRow(state, info) {
+    const color = RISK_COLOR[info.worst] || '#4ade80';
+    const flagged = info.districts.filter(x => x.status !== 'SAFE')
+      .sort((a,b) => (SO[b.status]||0) - (SO[a.status]||0));
+    const districtHtml = flagged.length
+      ? flagged.map(x =>
+          `<span style="color:#f1f5f9;font-weight:600">${x.district}</span>` +
+          `<span style="color:#64748b;font-size:10px"> (${districtMetricGlobal(x)})</span>`
+        ).join('<span style="color:#334155"> · </span>')
+      : `<span style="color:#475569;font-size:11px">All districts clear</span>`;
+
+    return `
+      <div class="flex items-start gap-2 py-1.5" style="border-bottom:1px solid #1e293b">
+        <div style="min-width:110px;font-size:12px;font-weight:700;color:#94a3b8;padding-top:1px">${state}</div>
+        <span style="font-size:10px;font-weight:800;color:${color};background:${color}22;border:1px solid ${color}55;border-radius:4px;padding:1px 5px;flex-shrink:0;margin-top:1px">${info.worst}</span>
+        <div style="font-size:11px;line-height:1.6">${districtHtml}</div>
+      </div>`;
+  }
+
+  const stateRowsHtml = sortedStates.map(([s, info]) => stateRow(s, info)).join('');
+
+  // Append Claude reasoning as context
+  let aiSection = '';
+  const reasoning = d?.reasoning;
+  if (reasoning) {
+    const sentences = reasoning.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    const bullets = sentences.map(s =>
+      `<div class="flex items-start gap-2">
+         <span style="color:#334155;margin-top:2px;flex-shrink:0;user-select:none">·</span>
+         <span style="font-size:11px;color:#64748b;line-height:1.5">${s}</span>
+       </div>`
+    ).join('');
+    aiSection = `
+      <div style="border-top:1px solid #1e3a5f;margin:10px 0 8px"></div>
+      <p class="text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#334155">AI Context</p>
+      <div class="space-y-1">${bullets}</div>`;
+  }
+
+  el.innerHTML = `
+    <p class="text-sm font-semibold leading-snug mb-3" style="color:${riskColor}">${headline}</p>
+    <div class="mb-2">${stateRowsHtml}</div>
+    ${aiSection}`;
+
+  // Recommended action
+  const actionBlock = document.getElementById('aiActionBlock');
+  const actionEl    = document.getElementById('aiAction');
+  if (d?.recommended_action) {
+    actionEl.textContent = d.recommended_action;
+    actionBlock.classList.remove('hidden');
+  } else {
+    actionBlock.classList.add('hidden');
+  }
+}
+
 // Re-renders the Situation Overview section using the cached summary data.
 // Called both from renderSummary() and from setStateFilter() so state-chip
 // clicks update the overview without waiting for the next network refresh.
 function updateSituationOverview() {
   if (!_lastSummaryData) return;
+  const lbl = document.querySelector('#aiBanner .text-xs.font-semibold.uppercase');
   if (_stateFilter) {
     renderStateFocus(_stateFilter, _allDistricts, _lastSummaryData);
-    // Update section label to show current state focus
-    const lbl = document.querySelector('#aiBanner .text-xs.font-semibold.uppercase');
     if (lbl) lbl.textContent = `Situation Overview — ${_stateFilter}`;
   } else {
-    const risk  = _lastSummaryData.overall_risk || 'SAFE';
-    const color = RISK_COLOR[risk] || '#fff';
-    renderReasoningBullets(_lastSummaryData.reasoning || '', color);
-    // Restore recommended action
-    const actionBlock = document.getElementById('aiActionBlock');
-    const actionEl    = document.getElementById('aiAction');
-    if (_lastSummaryData.recommended_action) {
-      actionEl.textContent = _lastSummaryData.recommended_action;
-      actionBlock.classList.remove('hidden');
-    } else {
-      actionBlock.classList.add('hidden');
-    }
-    const lbl = document.querySelector('#aiBanner .text-xs.font-semibold.uppercase');
+    renderGlobalFocus(_allDistricts, _lastSummaryData);
     if (lbl) lbl.textContent = 'Situation Overview — Peninsula Malaysia';
   }
 }

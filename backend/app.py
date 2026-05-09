@@ -1648,6 +1648,86 @@ def get_flood_levels():
     return jsonify({"success": True, "data": result})
 
 
+@app.route("/api/flood/analyze/district", methods=["POST"])
+def analyze_district():
+    """
+    POST /api/flood/analyze/district
+    Run a Claude analysis focused on one specific district.
+    Body: { "district": "Gombak", "reading": { ...sensor fields... } }
+    """
+    data     = request.get_json() or {}
+    district = data.get("district", "").strip()
+    reading  = data.get("reading") or {}
+
+    if not district:
+        return jsonify({"error": "district required"}), 400
+
+    # Fall back to cached reading for this district if no reading provided
+    if not reading and district in _latest_readings:
+        reading = _latest_readings[district]
+
+    if not reading:
+        return jsonify({"error": f"No reading available for {district}"}), 400
+
+    assessment = _classify_risk_district(district, reading)
+    return jsonify({"success": True, "assessment": assessment})
+
+
+def _classify_risk_district(district: str, reading: dict) -> dict:
+    """Claude analysis scoped to a single district."""
+    if not _anthropic_client:
+        return _rule_based_fallback({district: reading})
+
+    is_flash   = district in URBAN_DISTRICTS
+    flood_type = "flash flood (Banjir Kilat)" if is_flash else "river overflow (Banjir Sungai)"
+    thresholds = (
+        "Watch ≥15mm/hr, Warning ≥30mm/hr, Danger ≥50mm/hr"
+        if is_flash else
+        "Watch ≥3.0m, Warning ≥4.5m, Danger ≥5.5m"
+    )
+    state = DISTRICT_TO_STATE.get(district, "Malaysia")
+
+    prompt = f"""You are a flood risk agent evaluating {district}, {state}.
+
+Flood type: {flood_type}
+Thresholds: {thresholds}
+
+Current reading:
+{json.dumps(reading, indent=2)}
+
+Assess THIS district only. Cover:
+1. What the current readings mean (safe, elevated, or critical?)
+2. Whether the 1–2 hour forecast changes the outlook
+3. What residents in {district} should do right now
+
+Respond ONLY in this exact JSON:
+{{
+  "risk_level": "SAFE|WATCH|WARNING|DANGER",
+  "affected_districts": ["{district}"],
+  "estimated_time_to_critical": "X hours or N/A",
+  "confidence": 0.0-1.0,
+  "recommended_action": "one clear action sentence for {district} residents",
+  "reasoning": "2–3 clear sentences about {district}: current conditions, short-term outlook, and what to watch for."
+}}"""
+
+    try:
+        message = _anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw   = message.content[0].text.strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            result = json.loads(match.group(0))
+            result["source"] = "claude"
+            return result
+    except Exception as e:
+        logger.error(f"[Claude district] {e}")
+
+    return _rule_based_fallback({district: reading})
+
+
 @app.route("/api/flood/analyze", methods=["POST"])
 def analyze_flood():
     """

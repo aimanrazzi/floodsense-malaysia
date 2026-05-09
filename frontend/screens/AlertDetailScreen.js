@@ -93,15 +93,36 @@ export default function AlertDetailScreen({ route, navigation }) {
     setLoading(true);
     setError(null);
     try {
-      // Pass null so the backend uses its full 43-district cached readings.
-      // Sending only one district's data caused Claude to report it couldn't
-      // evaluate the other 42 districts.
-      const data = await floodApi.analyze(null);
-      setAssessment({
-        ...data.assessment,
-        anomaly_score: data.anomaly_score,
-        timestamp: new Date().toISOString(),
-      });
+      const district = r?.district;
+      const reading  = district ? {
+        level:          r.river_level   ?? r.level   ?? 0,
+        rainfall:       r.rainfall_rate ?? r.rainfall ?? 0,
+        district:       district,
+        forecast_1h:    r.forecast_1h    ?? 0,
+        forecast_2h:    r.forecast_2h    ?? 0,
+        rain_chance_max: r.rain_chance_max ?? 0,
+        trend:          r.trend          ?? "stable",
+        flood_type:     r.flood_type     ?? "river_overflow",
+      } : null;
+
+      let data;
+      if (district && reading) {
+        // District-specific analysis — focused on this one district
+        data = await floodApi.analyzeDistrict(district, reading);
+        setAssessment({
+          ...data.assessment,
+          anomaly_score: null,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        // Fallback: full peninsula analysis if no district context
+        data = await floodApi.analyze(null);
+        setAssessment({
+          ...data.assessment,
+          anomaly_score: data.anomaly_score,
+          timestamp: new Date().toISOString(),
+        });
+      }
     } catch {
       setError("Could not get AI assessment. Check your connection.");
     } finally {
